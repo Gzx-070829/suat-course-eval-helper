@@ -8,7 +8,7 @@
 
 ### [Lite 版：推荐大多数同学使用](https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-lite.user.js)
 
-只填写当前课程，不自动保存，不自动提交。填写完成后，请检查并手动保存。
+只填写当前课程，不自动保存，不自动提交。填写完成后，请检查并手动保存。(我更建议这个,queue有小bug,而且本意是节省时间,所以有些低分还是要自己打的)
 
 ### [Queue 版：批量队列版](https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-queue.user.js)
 
@@ -37,6 +37,13 @@
 <img width="2553" height="1278" alt="安装 Tampermonkey 浏览器扩展" src="https://github.com/user-attachments/assets/4a4f1322-9969-4a9d-92ed-1b786303eb6d" />
 
 <img width="1115" height="275" alt="确认 Tampermonkey 已安装并启用" src="https://github.com/user-attachments/assets/c525da09-e50d-4b2b-810e-08542d146cdc" />
+
+## 一些问题
+> **无法使用(见下)**
+<img width="1625" height="381" alt="image" src="https://github.com/user-attachments/assets/977fc083-a053-4519-85ef-71e144f89cee" />
+
+<img width="1020" height="217" alt="image" src="https://github.com/user-attachments/assets/b5600d65-f8ff-46dd-b3ca-122c2bcd2bee" />
+- 即可解决
 
 ## 两个版本的区别
 
