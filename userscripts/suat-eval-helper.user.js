@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SIAT/SUAT 教师评价辅助填写器
 // @namespace    https://github.com/Gzx-070829/suat-course-eval-helper
-// @version      0.2.0
-// @description  深圳理工大学教评辅助预填工具：本地运行，不联网，不自动保存，不自动提交
+// @version      0.3.0
+// @description  深圳理工大学教评极简辅助预填工具：本地运行，不联网，不自动保存，不自动提交
 // @author       Gzx-070829
 // @homepageURL  https://github.com/Gzx-070829/suat-course-eval-helper
 // @supportURL   https://github.com/Gzx-070829/suat-course-eval-helper/issues
@@ -23,61 +23,68 @@
   // constants
   // ---------------------------------------------------------------------------
 
-  const SCRIPT = Object.freeze({
-    id: 'suat-eval-helper',
-    name: 'SIAT/SUAT 教师评价辅助填写器',
-    version: '0.2.0'
-  });
-  const SETTINGS_KEY = `${SCRIPT.id}:settings`;
-  const IDS = Object.freeze({
-    button: `${SCRIPT.id}-button`,
-    panel: `${SCRIPT.id}-panel`,
-    style: `${SCRIPT.id}-style`
-  });
+  const SCRIPT_ID = 'suat-eval-helper';
+  const BUTTON_ID = `${SCRIPT_ID}-button`;
+  const STYLE_ID = `${SCRIPT_ID}-style`;
   const ALLOWED_HOSTS = new Set(['education.siat.ac.cn', 'education.suat-sz.edu.cn']);
-  const PAGE_KEYWORDS = ['评价详情', '课程名称', '教师', '设置分值'];
+  const PAGE_KEYWORDS = ['评价', '课程名称', '教师', '设置分值'];
   const RATING_CONTEXT_PATTERN = /(评价|满意|分值|教学|课程|教师|评分)/;
-  const TYPE_LABELS = Object.freeze({
-    advantage: '优点类', suggestion: '建议类', interaction: '互动类',
-    practice: '实践类', content: '内容类', general: '通用类'
+  const TIMING = Object.freeze({ route: 350, dropdownOpen: 240, selected: 120, scroll: 90 });
+
+  const ADVANTAGE_PARTS = Object.freeze({
+    starts: [
+      '课程整体安排比较清晰',
+      '课程内容组织较有条理',
+      '本课程的知识点安排比较完整',
+      '课程整体节奏比较稳定',
+      '课程内容与学习目标比较匹配'
+    ],
+    middles: [
+      '讲解重点较为明确',
+      '能够帮助学生理解主要知识点',
+      '对课程内容的理解有一定帮助',
+      '课堂内容覆盖比较全面',
+      '有助于建立对本课程的整体认识'
+    ],
+    ends: [
+      '对后续学习有帮助。',
+      '有利于学生掌握相关基础内容。',
+      '能够帮助学生逐步理解课程要求。',
+      '对理解本课程的核心内容有帮助。',
+      '整体学习体验较好。'
+    ]
   });
-  const TYPE_RULES = Object.freeze([
-    ['suggestion', ['建议', '意见', '改进', '不足', '希望', '需要加强', '可以提升', '优化']],
-    ['interaction', ['互动', '讨论', '提问', '参与', '课堂氛围', '答疑', '反馈', '交流']],
-    ['practice', ['实践', '实验', '案例', '练习', '作业', '项目', '代码', '动手', '应用']],
-    ['content', ['内容', '重点', '难点', '结构', '进度', '安排', '知识', '章节', '讲解']],
-    ['advantage', ['优点', '满意', '特色', '收获', '值得肯定', '教学效果', '认可', '亮点']]
-  ]);
-  const DEFAULT_SETTINGS = Object.freeze({
-    rating: 'verySatisfied',
-    advantageTemplate: '课程整体安排较为清晰，讲解重点明确，有助于理解和掌握相关内容。',
-    suggestionTemplate: '希望后续可以适当增加案例讲解、课堂互动或重点总结，帮助学生进一步理解课程内容。'
+
+  const SUGGESTION_PARTS = Object.freeze({
+    starts: [
+      '希望后续可以适当增加更多案例讲解',
+      '建议课堂中可以增加一些重点内容回顾',
+      '希望之后可以适当增加课堂互动',
+      '建议适当增加课后练习或例题讲解',
+      '希望对较难的知识点可以多一些展开说明'
+    ],
+    middles: [
+      '帮助学生更好地理解课程内容',
+      '方便学生及时梳理知识点',
+      '有助于学生巩固课堂所学',
+      '让学生更容易把握课程重点',
+      '帮助学生进一步理解和应用相关知识'
+    ],
+    ends: [
+      '整体来说课程对学习是有帮助的。',
+      '这样可能会让学习效果更好。',
+      '这样有助于提高课堂学习效率。',
+      '这样可以帮助学生更好地跟上课程节奏。',
+      '整体教学已经比较认真，以上只是一些改进建议。'
+    ]
   });
-  const TIMING = Object.freeze({ route: 350, open: 260, settle: 140, scroll: 100 });
 
   const state = {
-    open: false,
-    drafts: [],
-    snapshot: null,
-    pageFingerprint: '',
     busy: false,
     routeTimer: 0,
     operationToken: 0,
     historyPatched: false,
-    observer: null,
-    diagnostics: {
-      recognized: false,
-      keywordHits: [],
-      selectTotal: 0,
-      selectVisible: 0,
-      ratingCandidates: 0,
-      textareaTotal: 0,
-      textareaVisible: 0,
-      textareaFillable: 0,
-      lastScanAt: '尚未扫描',
-      lastErrorType: '无'
-    },
-    lastResult: null
+    observer: null
   };
 
   // ---------------------------------------------------------------------------
@@ -92,12 +99,6 @@
     return String(value || '').replace(/[\u00a0\s]+/g, ' ').trim();
   }
 
-  function escapeHtml(value) {
-    return String(value || '').replace(/[&<>'"]/g, (char) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-    })[char]);
-  }
-
   function isRenderable(element) {
     if (!(element instanceof Element) || !element.isConnected) return false;
     const style = window.getComputedStyle(element);
@@ -106,20 +107,8 @@
     return rect.width > 0 && rect.height > 0;
   }
 
-  function stableHash(value) {
-    let hash = 2166136261;
-    for (const char of String(value || '')) {
-      hash ^= char.charCodeAt(0);
-      hash = Math.imul(hash, 16777619);
-    }
-    return hash >>> 0;
-  }
-
-  function setNativeValue(element, value) {
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-    descriptor?.set?.call(element, value);
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+  function randomItem(items) {
+    return items[Math.floor(Math.random() * items.length)];
   }
 
   async function reveal(element) {
@@ -127,101 +116,28 @@
     await sleep(TIMING.scroll);
   }
 
-  function markError(type, error) {
-    state.diagnostics.lastErrorType = type || '未知错误';
-    if (error) console.warn(`[${SCRIPT.id}] ${type}:`, error);
-  }
-
-  function nowText() {
-    return new Date().toLocaleString('zh-CN', { hour12: false });
-  }
-
-  function loadSettings() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-      return {
-        rating: ['verySatisfied', 'satisfied', 'none'].includes(saved.rating) ? saved.rating : DEFAULT_SETTINGS.rating,
-        advantageTemplate: normalizeText(saved.advantageTemplate) || DEFAULT_SETTINGS.advantageTemplate,
-        suggestionTemplate: normalizeText(saved.suggestionTemplate) || DEFAULT_SETTINGS.suggestionTemplate
-      };
-    } catch (error) {
-      markError('读取本地设置失败', error);
-      return { ...DEFAULT_SETTINGS };
-    }
-  }
-
-  function readPanelSettings() {
-    const panel = document.getElementById(IDS.panel);
-    return {
-      rating: panel?.querySelector('[data-field="rating"]')?.value || DEFAULT_SETTINGS.rating,
-      advantageTemplate: panel?.querySelector('[data-field="advantageTemplate"]')?.value.trim() || DEFAULT_SETTINGS.advantageTemplate,
-      suggestionTemplate: panel?.querySelector('[data-field="suggestionTemplate"]')?.value.trim() || DEFAULT_SETTINGS.suggestionTemplate
-    };
-  }
-
-  function saveSettings() {
-    const settings = readPanelSettings();
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-      refreshPreflight();
-      setStatus('评分和两段模板已保存到当前浏览器。', 'success');
-    } catch (error) {
-      markError('保存本地设置失败', error);
-      setStatus('设置保存失败，请检查浏览器存储权限。', 'error');
-    }
-  }
-
-  function ratingLabel(rating) {
-    if (rating === 'verySatisfied') return '非常满意';
-    if (rating === 'satisfied') return '满意';
-    return '不自动选择';
-  }
-
-  function getSchoolPageText() {
-    const text = document.body?.innerText || '';
-    const ownText = [document.getElementById(IDS.button), document.getElementById(IDS.panel)]
-      .map((node) => node?.innerText || '').filter(Boolean);
-    return ownText.reduce((result, part) => result.replace(part, ''), text);
-  }
-
   // ---------------------------------------------------------------------------
   // page detection
   // ---------------------------------------------------------------------------
 
-  function getPageSignals() {
-    const text = getSchoolPageText();
-    const keywordHits = PAGE_KEYWORDS.filter((word) => text.includes(word));
-    const recognized = ALLOWED_HOSTS.has(location.hostname) && (
-      (location.pathname.includes('/teaching/evaluation') && text.includes('评价')) ||
-      ['评价详情', '课程名称', '教师'].every((word) => text.includes(word)) ||
-      (text.includes('设置分值') && Boolean(document.querySelector('textarea, .el-select')))
+  function isEvaluationPage() {
+    if (!ALLOWED_HOSTS.has(location.hostname)) return false;
+    const bodyText = document.body?.innerText || '';
+    const hasFormControls = Boolean(document.querySelector('.el-select, textarea, .el-textarea__inner'));
+    const keywordHits = PAGE_KEYWORDS.filter((keyword) => bodyText.includes(keyword)).length;
+    return hasFormControls && (
+      location.pathname.includes('/teaching/evaluation') ||
+      keywordHits >= 2
     );
-    return { recognized, keywordHits };
-  }
-
-  function extractInternalIdentity() {
-    const labels = Array.from(document.querySelectorAll('label, th, dt, .el-form-item__label'));
-    const values = [];
-    for (const label of labels) {
-      const text = normalizeText(label.textContent);
-      if (!/^(课程名称|课程|教师姓名|授课教师|教师)[：:]?$/.test(text)) continue;
-      const container = label.closest('.el-form-item, tr, dl') || label.parentElement;
-      const value = normalizeText(container?.innerText || '').replace(text, '').replace(/^[:：]/, '').trim();
-      if (value) values.push(value.slice(0, 100));
-    }
-    return values.join('|');
-  }
-
-  function makePageFingerprint() {
-    return `${location.hostname}${location.pathname}${location.search}${location.hash}:${stableHash(extractInternalIdentity())}`;
   }
 
   // ---------------------------------------------------------------------------
-  // form detection
+  // Element UI rating handling
   // ---------------------------------------------------------------------------
 
-  function belongsToSchoolForm(element) {
-    return element instanceof Element && !element.closest(`#${IDS.panel}`) && !element.closest(`#${IDS.button}`);
+  function getNearbyText(element) {
+    const container = element.closest('.el-form-item, .form-item, [class*="question"], tr, li') || element.parentElement;
+    return normalizeText(container?.innerText || '').slice(0, 260);
   }
 
   function getSelectValue(select) {
@@ -229,623 +145,268 @@
     return normalizeText(input?.value || select.querySelector('.el-select__tags-text')?.textContent || '');
   }
 
-  function getNearbyText(element) {
-    const container = element.closest('.el-form-item, .form-item, [class*="question"], tr, li') || element.parentElement;
-    return normalizeText(container?.innerText || '').slice(0, 260);
-  }
-
-  function findRatingCandidates() {
+  function findRatingSelects() {
     return Array.from(document.querySelectorAll('.el-select')).filter((select) => {
-      if (!belongsToSchoolForm(select) || !isRenderable(select)) return false;
+      if (!isRenderable(select)) return false;
       if (select.classList.contains('is-disabled') || select.getAttribute('aria-disabled') === 'true') return false;
       return RATING_CONTEXT_PATTERN.test(getNearbyText(select));
     });
-  }
-
-  function findSchoolTextareas() {
-    return Array.from(document.querySelectorAll('textarea')).filter((textarea) => {
-      return textarea instanceof HTMLTextAreaElement && belongsToSchoolForm(textarea) && isRenderable(textarea);
-    });
-  }
-
-  function refreshDiagnosticCounts() {
-    const selects = Array.from(document.querySelectorAll('.el-select')).filter(belongsToSchoolForm);
-    const textareas = Array.from(document.querySelectorAll('textarea')).filter(belongsToSchoolForm);
-    state.diagnostics.selectTotal = selects.length;
-    state.diagnostics.selectVisible = selects.filter(isRenderable).length;
-    state.diagnostics.ratingCandidates = findRatingCandidates().length;
-    state.diagnostics.textareaTotal = textareas.length;
-    state.diagnostics.textareaVisible = textareas.filter(isRenderable).length;
-    state.diagnostics.textareaFillable = textareas.filter((item) => isRenderable(item) && !item.disabled && !item.readOnly && !item.value.trim()).length;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Element UI select handling
-  // ---------------------------------------------------------------------------
-
-  function canonicalRating(text) {
-    const value = normalizeText(text).replace(/\s/g, '');
-    const patterns = [
-      ['verySatisfied', /^非常满意(?:[（(]?5分[）)]?)?$/],
-      ['satisfied', /^满意(?:[（(]?4分[）)]?)?$/],
-      ['general', /^(?:一般|一般满意)(?:[（(]?3分[）)]?)?$/],
-      ['dissatisfied', /^不满意(?:[（(]?2分[）)]?)?$/],
-      ['veryDissatisfied', /^非常不满意(?:[（(]?1分[）)]?)?$/]
-    ];
-    return patterns.find(([, pattern]) => pattern.test(value))?.[0] || '';
   }
 
   function visibleDropdowns() {
     return Array.from(document.querySelectorAll('.el-select-dropdown')).filter(isRenderable);
   }
 
-  function resolveCurrentDropdown(select, before) {
-    const after = visibleDropdowns();
-    const newDropdowns = after.filter((item) => !before.has(item));
-    if (newDropdowns.length === 1) return newDropdowns[0];
+  function resolveCurrentDropdown(select, beforeDropdowns) {
+    const visible = visibleDropdowns();
+    const newlyVisible = visible.filter((dropdown) => !beforeDropdowns.has(dropdown));
+    if (newlyVisible.length === 1) return newlyVisible[0];
+
     const trigger = select.querySelector('[aria-controls], [aria-owns]');
     const controlledId = trigger?.getAttribute('aria-controls') || trigger?.getAttribute('aria-owns');
     const controlled = controlledId ? document.getElementById(controlledId) : null;
-    if (controlled && isRenderable(controlled) && controlled.matches('.el-select-dropdown, .el-select-dropdown *')) {
-      return controlled.closest('.el-select-dropdown') || controlled;
+    if (controlled && isRenderable(controlled)) {
+      return controlled.closest('.el-select-dropdown') || (controlled.matches('.el-select-dropdown') ? controlled : null);
     }
-    return after.length === 1 ? after[0] : null;
+
+    return visible.length === 1 ? visible[0] : null;
   }
 
-  function closeCurrentSelect(trigger) {
+  function canonicalRating(text) {
+    const value = normalizeText(text).replace(/\s/g, '');
+    if (/^非常满意(?:[（(]5分[）)])?$/.test(value)) return 'verySatisfied';
+    if (/^满意(?:[（(]4分[）)])?$/.test(value)) return 'satisfied';
+    return '';
+  }
+
+  function closeDropdown(trigger) {
     trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
   }
 
-  async function fillOneRating(select, rating, token) {
-    if (token !== state.operationToken || !select.isConnected) return { status: 'failed', reason: '页面已变化' };
-    if (getSelectValue(select)) return { status: 'existing' };
+  function createRatingPlan(count) {
+    if (count <= 0) return [];
+    const plan = Array(count).fill('verySatisfied');
+
+    let satisfiedCount = 0;
+    if (count >= 8) {
+      const satisfiedRatio = 0.05 + Math.random() * 0.10;
+      satisfiedCount = Math.max(1, Math.floor(count * satisfiedRatio));
+    } else {
+      for (let index = 0; index < count; index += 1) {
+        if (Math.random() < 0.10) satisfiedCount += 1;
+      }
+      satisfiedCount = Math.min(1, satisfiedCount);
+    }
+
+    const indexes = Array.from({ length: count }, (_, index) => index);
+    for (let index = indexes.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [indexes[index], indexes[swapIndex]] = [indexes[swapIndex], indexes[index]];
+    }
+    indexes.slice(0, satisfiedCount).forEach((index) => { plan[index] = 'satisfied'; });
+    return plan;
+  }
+
+  async function selectRating(select, rating, operationToken) {
+    if (operationToken !== state.operationToken || !select.isConnected) return false;
     await reveal(select);
-    if (getSelectValue(select)) return { status: 'existing' };
 
     const trigger = select.querySelector('input.el-input__inner, [role="combobox"]') || select;
     const beforeDropdowns = new Set(visibleDropdowns());
     trigger.click();
-    await sleep(TIMING.open);
+    await sleep(TIMING.dropdownOpen);
+    if (operationToken !== state.operationToken || !select.isConnected) return false;
+
     const dropdown = resolveCurrentDropdown(select, beforeDropdowns);
     if (!dropdown) {
-      closeCurrentSelect(trigger);
-      return { status: 'unsafe', reason: '无法唯一识别当前下拉层' };
+      closeDropdown(trigger);
+      return false;
     }
 
     const items = Array.from(dropdown.querySelectorAll('.el-select-dropdown__item')).filter((item) => {
       return isRenderable(item) && !item.classList.contains('is-disabled') && item.getAttribute('aria-disabled') !== 'true';
     });
-    const kinds = new Set(items.map((item) => canonicalRating(item.innerText)).filter(Boolean));
-    if (kinds.size < 3) {
-      closeCurrentSelect(trigger);
-      return { status: 'unsafe', reason: '评分选项不足三个' };
+    const targetItems = items.filter((item) => canonicalRating(item.innerText) === rating);
+    if (targetItems.length !== 1) {
+      closeDropdown(trigger);
+      return false;
     }
 
-    const targets = items.filter((item) => canonicalRating(item.innerText) === rating);
-    if (targets.length !== 1) {
-      closeCurrentSelect(trigger);
-      return { status: 'unsafe', reason: '目标评分不存在或不唯一' };
-    }
-    if (getSelectValue(select)) {
-      closeCurrentSelect(trigger);
-      return { status: 'existing' };
-    }
-
-    targets[0].click();
-    await sleep(TIMING.settle);
-    const afterValue = getSelectValue(select);
-    if (canonicalRating(afterValue) !== rating) return { status: 'failed', reason: '选择后未能验证评分' };
-    return { status: 'filled', afterValue };
-  }
-
-  async function clearRatingEntry(entry) {
-    if (!entry.element?.isConnected || normalizeText(getSelectValue(entry.element)) !== normalizeText(entry.after)) return 'changed';
-    entry.element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-    await sleep(80);
-    const clear = entry.element.querySelector('.el-icon-circle-close, .is-show-close, [class*="circle-close"]');
-    if (!clear || !isRenderable(clear)) return 'manual';
-    clear.click();
-    await sleep(TIMING.settle);
-    return getSelectValue(entry.element) ? 'manual' : 'restored';
+    if (operationToken !== state.operationToken) return false;
+    targetItems[0].click();
+    await sleep(TIMING.selected);
+    return canonicalRating(getSelectValue(select)) === rating;
   }
 
   // ---------------------------------------------------------------------------
-  // textarea question extraction
+  // local text templates
   // ---------------------------------------------------------------------------
 
-  function cleanQuestionText(value, textarea) {
-    let text = String(value || '');
-    if (textarea?.value) text = text.replace(textarea.value, ' ');
-    text = text
-      .replace(/(?:^|\s)[（(]?\d+[）).、．]\s*/g, ' ')
-      .replace(/[＊*]+/g, ' ')
-      .replace(/请输入|最多\s*\d+\s*字|还可输入\s*\d+\s*字|\d+\s*\/\s*\d+/g, ' ')
-      .replace(/校验失败|不能为空|必填项?|字数统计|清空|取消/g, ' ');
-    return normalizeText(text).replace(/^[:：\-—]+|[:：\-—]+$/g, '').trim();
+  function combineParts(parts) {
+    const start = randomItem(parts.starts);
+    const middle = randomItem(parts.middles);
+    const end = randomItem(parts.ends);
+    return Math.random() < 0.35
+      ? `${start}，${middle}。${end}`
+      : `${start}，${middle}，${end}`;
   }
 
-  function collectQuestionContext(textarea) {
-    const candidates = [];
-    const labelledBy = textarea.getAttribute('aria-labelledby');
-    if (labelledBy) {
-      candidates.push(labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.innerText || '').join(' '));
-    }
-    if (textarea.id) {
-      const label = Array.from(document.querySelectorAll('label[for]')).find((item) => item.htmlFor === textarea.id);
-      if (label) candidates.push(label.innerText);
-    }
-    const formItem = textarea.closest('.el-form-item');
-    candidates.push(formItem?.querySelector('.el-form-item__label')?.innerText || '');
-    const row = textarea.closest('tr');
-    if (row) {
-      candidates.push(row.querySelector('th')?.innerText || '');
-      const cell = textarea.closest('td');
-      if (cell?.previousElementSibling) candidates.push(cell.previousElementSibling.innerText || '');
-    }
-    const questionContainer = textarea.closest('.form-item, [class*="question"], li, fieldset, .el-form-item');
-    const title = questionContainer?.querySelector('legend, label, [class*="title"], [class*="label"]');
-    candidates.push(title?.innerText || '');
-    let sibling = textarea.previousElementSibling;
-    while (sibling && candidates.length < 9) {
-      candidates.push(sibling.innerText || sibling.textContent || '');
-      sibling = sibling.previousElementSibling;
-    }
-    candidates.push(questionContainer?.innerText || textarea.parentElement?.innerText || '');
-
-    for (const candidate of candidates) {
-      const cleaned = cleanQuestionText(candidate, textarea);
-      if (cleaned.length >= 2 && cleaned.length <= 180) return { text: cleaned, recognized: true };
-    }
-    return { text: '未识别到明确题目', recognized: false };
+  function generateAdvantage() {
+    return combineParts(ADVANTAGE_PARTS);
   }
 
-  // ---------------------------------------------------------------------------
-  // local draft generation
-  // ---------------------------------------------------------------------------
+  function generateSuggestion() {
+    return combineParts(SUGGESTION_PARTS);
+  }
 
-  function inferQuestionType(questionText) {
-    const text = normalizeText(questionText);
-    let best = { type: 'general', score: 0, priority: TYPE_RULES.length };
-    TYPE_RULES.forEach(([type, keywords], priority) => {
-      let score = 0;
-      for (const keyword of keywords) {
-        const index = text.indexOf(keyword);
-        if (index >= 0) score += 10 + Math.max(0, 5 - Math.floor(index / 12));
-      }
-      if (score > best.score || (score === best.score && score > 0 && priority < best.priority)) {
-        best = { type, score, priority };
-      }
+  function findTextareas() {
+    const candidates = Array.from(document.querySelectorAll('textarea, .el-textarea__inner'));
+    return Array.from(new Set(candidates)).filter((textarea) => {
+      return textarea instanceof HTMLTextAreaElement &&
+        isRenderable(textarea) &&
+        !textarea.disabled &&
+        !textarea.readOnly;
     });
-    return best.type;
   }
 
-  function generateLocalDraft(questionType, settings) {
-    const suggestionTypes = new Set(['suggestion', 'interaction', 'practice', 'content']);
-    return suggestionTypes.has(questionType) ? settings.suggestionTemplate : settings.advantageTemplate;
+  function fillTextarea(textarea, value) {
+    textarea.focus();
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    descriptor?.set?.call(textarea, value);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    textarea.blur();
   }
 
-  function captureDraftEdits() {
-    const panel = document.getElementById(IDS.panel);
-    if (!panel) return;
-    for (const draft of state.drafts) {
-      const editor = panel.querySelector(`[data-draft-editor="${draft.id}"]`);
-      const skip = panel.querySelector(`[data-draft-skip="${draft.id}"]`);
-      if (editor) draft.draft = editor.value;
-      if (skip) draft.skip = skip.checked;
+  async function fillOpenQuestions() {
+    const textareas = findTextareas().slice(0, 2);
+    if (!textareas.length) return 0;
+
+    if (textareas.length === 1) {
+      await reveal(textareas[0]);
+      fillTextarea(textareas[0], `${generateAdvantage()}${generateSuggestion()}`);
+      return 1;
     }
-  }
 
-  function scanAndGenerate(options = {}) {
-    captureDraftEdits();
-    const settings = readPanelSettings();
-    const textareas = findSchoolTextareas();
-    const unknown = [];
-    state.drafts = textareas.map((textarea, index) => {
-      const question = collectQuestionContext(textarea);
-      const type = question.recognized ? inferQuestionType(question.text) : 'general';
-      if (!question.recognized) unknown.push(index + 1);
-      const existing = Boolean(textarea.value.trim()) || textarea.disabled || textarea.readOnly;
-      return {
-        id: `q${index}-${stableHash(question.text)}`,
-        element: textarea,
-        question: question.text,
-        recognized: question.recognized,
-        type,
-        draft: generateLocalDraft(type, settings),
-        skip: existing,
-        existing
-      };
-    });
-    state.diagnostics.lastScanAt = nowText();
-    state.diagnostics.lastErrorType = unknown.length ? '部分题目文本识别失败' : '无';
-    refreshDiagnosticCounts();
-    renderDraftCards();
-    refreshPreflight();
-    if (!options.quiet) {
-      setStatus(textareas.length ? `预检完成：发现 ${textareas.length} 个文本框，请检查两段模板和逐题预览。` : '没有找到可见文本框，请确认已进入具体课程评价页面。', textareas.length ? 'success' : 'error');
-    }
-  }
-
-  function refreshPreflight() {
-    const box = document.querySelector(`#${IDS.panel} [data-role="preflight"]`);
-    if (!box) return;
-    const signals = getPageSignals();
-    const settings = readPanelSettings();
-    const ratingCount = findRatingCandidates().length;
-    const textareaCount = findSchoolTextareas().length;
-    box.innerHTML = `
-      <h3>预检结果</h3>
-      <dl>
-        <div><dt>识别为教评页面</dt><dd>${signals.recognized ? '是' : '否'}</dd></div>
-        <div><dt>发现评分下拉框</dt><dd>${ratingCount} 个</dd></div>
-        <div><dt>发现文本框</dt><dd>${textareaCount} 个</dd></div>
-        <div><dt>将选择的评分</dt><dd>${escapeHtml(ratingLabel(settings.rating))}</dd></div>
-      </dl>
-      <p><strong>优点评价模板：</strong>${escapeHtml(settings.advantageTemplate)}</p>
-      <p><strong>建议评价模板：</strong>${escapeHtml(settings.suggestionTemplate)}</p>
-    `;
+    await reveal(textareas[0]);
+    fillTextarea(textareas[0], generateAdvantage());
+    await reveal(textareas[1]);
+    fillTextarea(textareas[1], generateSuggestion());
+    return 2;
   }
 
   // ---------------------------------------------------------------------------
-  // snapshot / undo
+  // one-click fill
   // ---------------------------------------------------------------------------
 
-  async function applyDrafts() {
+  async function fillEvaluation() {
     if (state.busy) return;
-    if (!state.drafts.length) scanAndGenerate({ quiet: true });
-    captureDraftEdits();
-    if (!state.drafts.length) {
-      setStatus('请先点击“扫描并生成草稿”。', 'error');
+    if (!isEvaluationPage()) {
+      window.alert('当前页面不像课程评价详情页，请进入具体课程后再试。');
       return;
     }
-    const settings = readPanelSettings();
-    const rating = settings.rating;
-    const selectedDrafts = state.drafts.filter((item) => !item.skip && item.draft.trim());
-    const preflight = getPageSignals();
-    const approved = window.confirm(
-      `预检结果：\n\n识别为教评页面：${preflight.recognized ? '是' : '否'}\n发现评分下拉框：${findRatingCandidates().length} 个\n发现文本框：${findSchoolTextareas().length} 个\n将选择的评分：${ratingLabel(rating)}\n将填写的模板：优点评价模板、建议评价模板\n\n即将预填 ${selectedDrafts.length} 个空白开放题。只填写空白项；不会自动保存或提交。是否继续？`
-    );
-    if (!approved) return;
 
     state.busy = true;
     state.operationToken += 1;
-    const token = state.operationToken;
-    const fingerprint = makePageFingerprint();
-    const snapshot = { pageFingerprint: fingerprint, createdAt: Date.now(), entries: [] };
-    const result = {
-      ratingCandidates: 0, ratingFilled: 0, ratingExisting: 0, ratingUnsafe: 0, ratingFailed: 0,
-      textFilled: 0, textExisting: 0, textSkipped: state.drafts.filter((item) => item.skip).length
-    };
-    setBusy(true, '正在安全预填，请稍候…');
+    const operationToken = state.operationToken;
+    const button = document.getElementById(BUTTON_ID);
+    if (button) {
+      button.disabled = true;
+      button.textContent = '填写中...';
+    }
+
+    const ratingSelects = findRatingSelects();
+    const ratingPlan = createRatingPlan(ratingSelects.length);
+    let verySatisfiedCount = 0;
+    let satisfiedCount = 0;
+    let textareaCount = 0;
 
     try {
-      if (rating !== 'none') {
-        const candidates = findRatingCandidates();
-        result.ratingCandidates = candidates.length;
-        for (const select of candidates) {
-          const outcome = await fillOneRating(select, rating, token);
-          if (outcome.status === 'filled') {
-            result.ratingFilled += 1;
-            snapshot.entries.push({ type: 'rating', element: select, before: '', after: outcome.afterValue });
-          } else if (outcome.status === 'existing') result.ratingExisting += 1;
-          else if (outcome.status === 'unsafe') result.ratingUnsafe += 1;
-          else result.ratingFailed += 1;
-          if (outcome.reason) state.diagnostics.lastErrorType = outcome.reason;
+      for (let index = 0; index < ratingSelects.length; index += 1) {
+        try {
+          const rating = ratingPlan[index];
+          const selected = await selectRating(ratingSelects[index], rating, operationToken);
+          if (selected && rating === 'verySatisfied') verySatisfiedCount += 1;
+          if (selected && rating === 'satisfied') satisfiedCount += 1;
+        } catch (error) {
+          console.warn(`[${SCRIPT_ID}] 评分项处理失败：`, error);
         }
       }
-
-      for (const draft of selectedDrafts) {
-        const textarea = draft.element;
-        if (token !== state.operationToken || makePageFingerprint() !== fingerprint) throw new Error('页面已变化，操作已停止');
-        if (!textarea?.isConnected || textarea.disabled || textarea.readOnly || !belongsToSchoolForm(textarea)) {
-          result.textExisting += 1;
-          continue;
-        }
-        if (textarea.value.trim()) {
-          result.textExisting += 1;
-          continue;
-        }
-        await reveal(textarea);
-        if (textarea.value.trim()) {
-          result.textExisting += 1;
-          continue;
-        }
-        const nextValue = draft.draft.trim();
-        setNativeValue(textarea, nextValue);
-        snapshot.entries.push({ type: 'textarea', element: textarea, before: '', after: nextValue });
-        result.textFilled += 1;
+      if (operationToken === state.operationToken && isEvaluationPage()) {
+        textareaCount = await fillOpenQuestions();
       }
 
-      state.snapshot = snapshot.entries.length ? snapshot : null;
-      state.lastResult = result;
-      refreshDiagnosticCounts();
-      setStatus(`预填完成：评分 ${result.ratingFilled} 项，文本 ${result.textFilled} 项。请逐项检查后手动保存。`, 'success');
       window.alert(
-        `辅助预填完成：\n\n疑似评分控件：${result.ratingCandidates}\n成功填写评分：${result.ratingFilled}\n已有评分跳过：${result.ratingExisting}\n安全原因跳过：${result.ratingUnsafe}\n评分失败：${result.ratingFailed}\n填写文本框：${result.textFilled}\n已有文本跳过：${result.textExisting}\n\n本工具没有保存或提交，请检查后手动操作。`
+        `教评辅助填写完成：\n\n` +
+        `发现评分项数量：${ratingSelects.length}\n` +
+        `非常满意数量：${verySatisfiedCount}\n` +
+        `满意数量：${satisfiedCount}\n` +
+        `文本框填写数量：${textareaCount}\n\n` +
+        '请逐项检查评分和文字，确认无误后手动保存。'
       );
-    } catch (error) {
-      markError('预填过程失败', error);
-      state.snapshot = snapshot.entries.length ? snapshot : null;
-      setStatus(`操作已停止：${error.message}`, 'error');
     } finally {
       state.busy = false;
-      setBusy(false);
-    }
-  }
-
-  async function undoLastApply() {
-    if (state.busy) return;
-    const snapshot = state.snapshot;
-    if (!snapshot) {
-      setStatus('当前没有可撤销的填写记录。', 'error');
-      return;
-    }
-    if (makePageFingerprint() !== snapshot.pageFingerprint) {
-      state.snapshot = null;
-      setStatus('页面已经变化，旧撤销记录已失效。', 'error');
-      return;
-    }
-    state.busy = true;
-    setBusy(true, '正在撤销最近一次填写…');
-    const stats = { text: 0, rating: 0, changed: 0, manual: 0 };
-    try {
-      for (const entry of [...snapshot.entries].reverse()) {
-        if (entry.type === 'textarea') {
-          if (!entry.element?.isConnected || entry.element.value !== entry.after) {
-            stats.changed += 1;
-            continue;
-          }
-          setNativeValue(entry.element, entry.before);
-          stats.text += 1;
-        } else {
-          const result = await clearRatingEntry(entry);
-          if (result === 'restored') stats.rating += 1;
-          else if (result === 'changed') stats.changed += 1;
-          else stats.manual += 1;
-        }
+      const currentButton = document.getElementById(BUTTON_ID);
+      if (currentButton) {
+        currentButton.disabled = false;
+        currentButton.textContent = '教评辅助';
       }
-      state.snapshot = null;
-      refreshDiagnosticCounts();
-      setStatus(`撤销完成：文本 ${stats.text} 项，评分 ${stats.rating} 项；${stats.manual} 项评分需手动检查。`, stats.manual ? 'info' : 'success');
-      window.alert(`撤销完成：\n\n已恢复文本框：${stats.text}\n已恢复评分：${stats.rating}\n因用户修改而跳过：${stats.changed}\n需要手动检查：${stats.manual}`);
-    } finally {
-      state.busy = false;
-      setBusy(false);
     }
   }
 
   // ---------------------------------------------------------------------------
-  // diagnostics
-  // ---------------------------------------------------------------------------
-
-  function diagnosticPayload() {
-    refreshDiagnosticCounts();
-    const signals = getPageSignals();
-    return {
-      scriptName: SCRIPT.name,
-      version: SCRIPT.version,
-      hostname: location.hostname,
-      pathname: location.pathname,
-      evaluationPageRecognized: signals.recognized,
-      pageKeywordHits: signals.keywordHits,
-      selectTotal: state.diagnostics.selectTotal,
-      selectVisible: state.diagnostics.selectVisible,
-      suspectedRatingSelects: state.diagnostics.ratingCandidates,
-      textareaTotal: state.diagnostics.textareaTotal,
-      textareaVisible: state.diagnostics.textareaVisible,
-      textareaFillable: state.diagnostics.textareaFillable,
-      lastScanAt: state.diagnostics.lastScanAt,
-      lastErrorType: state.diagnostics.lastErrorType
-    };
-  }
-
-  function showDiagnostics() {
-    const box = document.querySelector(`#${IDS.panel} [data-role="diagnostics"]`);
-    if (!box) return;
-    const data = diagnosticPayload();
-    const hints = [];
-    if (!data.suspectedRatingSelects || !data.textareaVisible) {
-      hints.push('可能还没进入具体课程评价页面', '页面可能还没加载完成', '当前课程可能已评价完成', '页面结构可能变化');
-    }
-    box.hidden = false;
-    box.innerHTML = `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>${hints.length ? `<p>${escapeHtml(hints.join('；'))}。</p>` : ''}<button type="button" data-action="copy-diagnostics">复制诊断信息</button>`;
-    box.querySelector('[data-action="copy-diagnostics"]').addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-        setStatus('诊断信息已复制，不包含课程名、教师名或评价内容。', 'success');
-      } catch (error) {
-        markError('复制诊断信息失败', error);
-        setStatus('复制失败，请手动选中诊断文本复制。', 'error');
-      }
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // UI panel
+  // button and SPA lifecycle
   // ---------------------------------------------------------------------------
 
   function injectStyles() {
-    if (document.getElementById(IDS.style)) return;
+    if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement('style');
-    style.id = IDS.style;
+    style.id = STYLE_ID;
     style.textContent = `
-      #${IDS.button}, #${IDS.panel}, #${IDS.panel} * { box-sizing: border-box; }
-      #${IDS.button} { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000; border: 0; border-radius: 999px; padding: 11px 17px; color: #fff; background: #1769e0; box-shadow: 0 8px 28px rgba(23,105,224,.32); font: 600 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; cursor: pointer; }
-      #${IDS.panel} { position: fixed; right: 20px; bottom: 74px; z-index: 2147483000; width: min(430px, calc(100vw - 28px)); max-height: calc(100vh - 94px); overflow: auto; padding: 16px; border: 1px solid #d9e2f0; border-radius: 15px; color: #172033; background: #fff; box-shadow: 0 16px 46px rgba(23,32,51,.25); font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-      #${IDS.panel}[hidden] { display: none !important; }
-      #${IDS.panel} h2 { margin: 0 0 6px; font-size: 18px; }
-      #${IDS.panel} .suat-note { margin: 4px 0; color: #526078; font-size: 12px; }
-      #${IDS.panel} .suat-safe { margin: 12px 0; padding: 9px 11px; border-radius: 9px; background: #eef7f2; color: #245c43; font-size: 12px; }
-      #${IDS.panel} .suat-templates textarea { min-height: 72px; }
-      #${IDS.panel} [data-role="preflight"] { margin: 12px 0; padding: 10px 11px; border: 1px solid #cfe0f5; border-radius: 10px; background: #f5f9ff; }
-      #${IDS.panel} [data-role="preflight"] h3 { margin: 0 0 7px; font-size: 14px; }
-      #${IDS.panel} [data-role="preflight"] dl { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin: 0 0 8px; }
-      #${IDS.panel} [data-role="preflight"] dl div { display: flex; justify-content: space-between; gap: 8px; }
-      #${IDS.panel} [data-role="preflight"] dt { color: #5b6678; } #${IDS.panel} [data-role="preflight"] dd { margin: 0; font-weight: 650; }
-      #${IDS.panel} [data-role="preflight"] p { margin: 6px 0; font-size: 12px; overflow-wrap: anywhere; }
-      #${IDS.panel} .suat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-      #${IDS.panel} label { display: block; margin: 8px 0 4px; font-size: 12px; font-weight: 650; color: #3c465a; }
-      #${IDS.panel} select, #${IDS.panel} textarea { width: 100%; border: 1px solid #cbd5e3; border-radius: 8px; padding: 8px 9px; color: #172033; background: #fff; font: inherit; }
-      #${IDS.panel} textarea { min-height: 82px; resize: vertical; }
-      #${IDS.panel} .suat-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
-      #${IDS.panel} button { min-height: 36px; border: 0; border-radius: 8px; padding: 8px 10px; color: #fff; background: #1769e0; font: 600 13px/1.25 inherit; cursor: pointer; }
-      #${IDS.panel} button[data-action="apply"] { background: #127a4b; }
-      #${IDS.panel} button[data-action="undo"], #${IDS.panel} button[data-action="diagnostics"] { color: #29405e; background: #eaf1fa; }
-      #${IDS.panel} button[data-action="close"] { color: #5f2930; background: #f9e9eb; }
-      #${IDS.panel} button:disabled { opacity: .55; cursor: wait; }
-      #${IDS.panel} .suat-card { margin: 10px 0; padding: 11px; border: 1px solid #dce4ef; border-radius: 10px; background: #fbfcfe; }
-      #${IDS.panel} .suat-question { margin: 0 0 6px; font-weight: 650; }
-      #${IDS.panel} .suat-tag { display: inline-block; margin-bottom: 5px; padding: 2px 7px; border-radius: 999px; color: #17549b; background: #e8f2ff; font-size: 11px; }
-      #${IDS.panel} .suat-check { display: flex; align-items: center; gap: 6px; font-weight: 500; }
-      #${IDS.panel} .suat-check input { margin: 0; }
-      #${IDS.panel} .suat-existing { color: #96630a; font-size: 12px; }
-      #${IDS.panel} [data-role="status"] { padding: 8px 10px; border-radius: 8px; background: #f1f4f8; font-size: 12px; }
-      #${IDS.panel} [data-role="status"][data-type="success"] { color: #12613f; background: #e9f7ef; }
-      #${IDS.panel} [data-role="status"][data-type="error"] { color: #962f2f; background: #fff0f0; }
-      #${IDS.panel} [data-role="diagnostics"] { margin-top: 10px; padding: 10px; border-radius: 9px; background: #f6f8fb; }
-      #${IDS.panel} [data-role="diagnostics"][hidden] { display: none; }
-      #${IDS.panel} pre { max-height: 240px; overflow: auto; margin: 0 0 8px; white-space: pre-wrap; font: 11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; }
+      #${BUTTON_ID} {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 2147483000;
+        min-width: 88px;
+        min-height: 38px;
+        border: 0;
+        border-radius: 999px;
+        padding: 9px 15px;
+        color: #fff;
+        background: #1769e0;
+        box-shadow: 0 6px 20px rgba(23, 105, 224, 0.28);
+        font: 600 14px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+      #${BUTTON_ID}:hover { background: #1259c3; }
+      #${BUTTON_ID}:disabled { opacity: 0.68; cursor: wait; }
     `;
     document.head.appendChild(style);
   }
 
-  function setStatus(message, type = 'info') {
-    const status = document.querySelector(`#${IDS.panel} [data-role="status"]`);
-    if (!status) return;
-    status.textContent = message;
-    status.dataset.type = type;
-  }
-
-  function setBusy(busy, message = '') {
-    const panel = document.getElementById(IDS.panel);
-    panel?.querySelectorAll('button, select').forEach((control) => { control.disabled = busy; });
-    if (message) setStatus(message);
-  }
-
-  function renderDraftCards() {
-    const container = document.querySelector(`#${IDS.panel} [data-role="drafts"]`);
-    if (!container) return;
-    container.innerHTML = state.drafts.length ? state.drafts.map((item) => `
-      <article class="suat-card">
-        <p class="suat-question">${escapeHtml(item.question)}</p>
-        <span class="suat-tag">${TYPE_LABELS[item.type]}</span>
-        ${item.existing ? '<p class="suat-existing">此题已有内容或不可编辑，已自动跳过。</p>' : ''}
-        <textarea data-draft-editor="${escapeHtml(item.id)}" ${item.existing ? 'disabled' : ''}>${escapeHtml(item.draft)}</textarea>
-        <label class="suat-check"><input type="checkbox" data-draft-skip="${escapeHtml(item.id)}" ${item.skip ? 'checked' : ''} ${item.existing ? 'disabled' : ''}> 本题不填写</label>
-      </article>
-    `).join('') : '<p class="suat-note">打开面板后会先预检，并在这里显示逐题预览。</p>';
-    for (const item of state.drafts) {
-      container.querySelector(`[data-draft-editor="${item.id}"]`)?.addEventListener('input', (event) => { item.draft = event.target.value; });
-      container.querySelector(`[data-draft-skip="${item.id}"]`)?.addEventListener('change', (event) => { item.skip = event.target.checked; });
-    }
-  }
-
-  function mountUI() {
+  function mountButton() {
+    if (document.getElementById(BUTTON_ID)) return;
     injectStyles();
-    if (!document.getElementById(IDS.button)) {
-      const button = document.createElement('button');
-      button.id = IDS.button;
-      button.type = 'button';
-      button.textContent = '教评辅助';
-      button.addEventListener('click', () => {
-        state.open = !state.open;
-        const panel = document.getElementById(IDS.panel);
-        if (panel) {
-          panel.hidden = !state.open;
-          if (state.open) {
-            scanAndGenerate({ quiet: true });
-            setStatus('预检完成。请核对评分、模板和控件数量，确认后再预填。', 'success');
-          }
-        }
-      });
-      document.body.appendChild(button);
-    }
-    if (document.getElementById(IDS.panel)) return;
-    const settings = loadSettings();
-    const panel = document.createElement('section');
-    panel.id = IDS.panel;
-    panel.hidden = !state.open;
-    panel.setAttribute('aria-label', '离线教评辅助面板');
-    panel.innerHTML = `
-      <h2>教评辅助填写器</h2>
-      <p class="suat-note">本工具完全在本地运行，不联网。</p>
-      <p class="suat-note">本工具不会自动保存或提交，请检查后手动保存。</p>
-      <label>评分选择</label><select data-field="rating"><option value="verySatisfied">非常满意</option><option value="satisfied">满意</option><option value="none">不自动选择</option></select>
-      <div class="suat-templates">
-        <label>优点评价模板</label><textarea data-field="advantageTemplate">${escapeHtml(settings.advantageTemplate)}</textarea>
-        <label>建议评价模板</label><textarea data-field="suggestionTemplate">${escapeHtml(settings.suggestionTemplate)}</textarea>
-      </div>
-      <div class="suat-safe">默认只填写空白项；已有评分和文本不会覆盖。如需修改，请先在学校页面手动清空。</div>
-      <div data-role="preflight"></div>
-      <div class="suat-actions">
-        <button type="button" data-action="scan">刷新预检</button>
-        <button type="button" data-action="apply">确认并预填</button>
-        <button type="button" data-action="save-settings">保存设置</button>
-        <button type="button" data-action="undo">撤销本次填写</button>
-        <button type="button" data-action="diagnostics">查看诊断信息</button>
-        <button type="button" data-action="close">关闭</button>
-      </div>
-      <div data-role="status" data-type="info" aria-live="polite">打开面板后会先进行预检，不会立即填写。</div>
-      <div data-role="drafts"></div>
-      <div data-role="diagnostics" hidden></div>
-    `;
-    document.body.appendChild(panel);
-    panel.querySelector('[data-field="rating"]').value = settings.rating;
-    panel.querySelector('[data-action="scan"]').addEventListener('click', scanAndGenerate);
-    panel.querySelector('[data-action="apply"]').addEventListener('click', applyDrafts);
-    panel.querySelector('[data-action="save-settings"]').addEventListener('click', saveSettings);
-    panel.querySelector('[data-action="undo"]').addEventListener('click', undoLastApply);
-    panel.querySelector('[data-action="diagnostics"]').addEventListener('click', showDiagnostics);
-    panel.querySelector('[data-action="close"]').addEventListener('click', () => {
-      state.open = false;
-      panel.hidden = true;
-    });
-    panel.querySelector('[data-field="rating"]').addEventListener('change', refreshPreflight);
-    for (const field of ['advantageTemplate', 'suggestionTemplate']) {
-      panel.querySelector(`[data-field="${field}"]`).addEventListener('change', () => scanAndGenerate({ quiet: true }));
-      panel.querySelector(`[data-field="${field}"]`).addEventListener('input', refreshPreflight);
-    }
-    renderDraftCards();
-    refreshPreflight();
+    const button = document.createElement('button');
+    button.id = BUTTON_ID;
+    button.type = 'button';
+    button.textContent = '教评辅助';
+    button.setAttribute('aria-label', '教评辅助预填，不会自动保存或提交');
+    button.addEventListener('click', fillEvaluation);
+    document.body.appendChild(button);
   }
 
-  function unmountUI() {
-    document.getElementById(IDS.button)?.remove();
-    document.getElementById(IDS.panel)?.remove();
-    state.open = false;
-  }
-
-  // ---------------------------------------------------------------------------
-  // SPA lifecycle
-  // ---------------------------------------------------------------------------
-
-  function resetPageState(fingerprint = '') {
-    state.operationToken += 1;
-    state.drafts = [];
-    state.snapshot = null;
-    state.pageFingerprint = fingerprint;
-    state.lastResult = null;
-    state.diagnostics.lastScanAt = '尚未扫描';
-    state.diagnostics.lastErrorType = '无';
+  function unmountButton() {
+    if (document.getElementById(BUTTON_ID)) {
+      state.operationToken += 1;
+      document.getElementById(BUTTON_ID)?.remove();
+    }
   }
 
   function syncWithPage() {
-    const signals = getPageSignals();
-    state.diagnostics.recognized = signals.recognized;
-    state.diagnostics.keywordHits = signals.keywordHits;
-    if (!signals.recognized) {
-      if (state.pageFingerprint) resetPageState('');
-      unmountUI();
-      return;
-    }
-    const fingerprint = makePageFingerprint();
-    if (fingerprint !== state.pageFingerprint) {
-      resetPageState(fingerprint);
-      document.getElementById(IDS.panel)?.remove();
-      document.getElementById(IDS.button)?.remove();
-    }
-    refreshDiagnosticCounts();
-    mountUI();
+    if (isEvaluationPage()) mountButton();
+    else unmountButton();
   }
 
   function scheduleSync() {
@@ -868,22 +429,10 @@
     window.addEventListener('hashchange', scheduleSync);
   }
 
-  // ---------------------------------------------------------------------------
-  // bootstrap
-  // ---------------------------------------------------------------------------
-
   function bootstrap() {
     patchHistory();
-    if (!state.observer) {
-      state.observer = new MutationObserver((mutations) => {
-        const relevant = mutations.some((mutation) => {
-          const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
-          return !target?.closest?.(`#${IDS.panel}`) && !target?.closest?.(`#${IDS.button}`);
-        });
-        if (relevant) scheduleSync();
-      });
-      state.observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-    }
+    state.observer = new MutationObserver(scheduleSync);
+    state.observer.observe(document.documentElement, { childList: true, subtree: true });
     syncWithPage();
   }
 
