@@ -1,8 +1,8 @@
 # SIAT/SUAT 教师评价辅助填写器
 
 适用于深圳理工大学 / 原 SIAT 教育信息化平台。
-### [深圳理工大学](https://education.suat-sz.edu.cn/)
-### [SIAT](https://education.siat.ac.cn/)
+### 深圳理工大学: https://education.suat-sz.edu.cn/
+### SIAT: https://education.siat.ac.cn/
 
 本项目本地运行，不联网，不使用 AI，不收集数据。
 
