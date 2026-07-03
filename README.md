@@ -8,6 +8,15 @@
 
 先在浏览器中安装 [Tampermonkey（篡改猴）](https://www.tampermonkey.net/)。安装完成后，再回到本页面选择一个版本。
 
+<img width="67" height="56" alt="image" src="https://github.com/user-attachments/assets/6161c2cf-6384-4855-9038-8e800c3bc63a" />
+<img width="1091" height="197" alt="image" src="https://github.com/user-attachments/assets/78098c66-cc7e-40fd-8aa5-2f07965c0d28" />
+<img width="2553" height="1278" alt="image" src="https://github.com/user-attachments/assets/4a4f1322-9969-4a9d-92ed-1b786303eb6d" />
+<img width="1115" height="275" alt="image" src="https://github.com/user-attachments/assets/c525da09-e50d-4b2b-810e-08542d146cdc" />
+
+
+
+
+
 ### 第 2 步：点击所需版本
 
 - **[一键安装 Lite 版](https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-lite.user.js)**：推荐大多数同学使用；不联网，使用内置文字模板。
