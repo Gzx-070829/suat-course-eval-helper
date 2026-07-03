@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SIAT/SUAT 教师评价辅助填写器 Queue
 // @namespace    https://github.com/Gzx-070829/suat-course-eval-helper
-// @version      0.5.0
+// @version      0.5.1
 // @description  深圳理工大学教评队列辅助预填工具：支持列表页队列填写和自动保存草稿，本地运行，不联网，不自动最终提交
 // @author       Gzx-070829
 // @homepageURL  https://github.com/Gzx-070829/suat-course-eval-helper
@@ -257,29 +257,82 @@
       Boolean(document.querySelector('table, .el-table'));
   }
 
-  function getEvaluationRows() {
-    return Array.from(new Set(document.querySelectorAll('tbody tr, .el-table__row'))).filter((row) => {
-      return row instanceof HTMLElement && isRenderable(row);
+  function isVisibleRow(row) {
+    return row instanceof HTMLElement && isRenderable(row);
+  }
+
+  function getMainTableRows() {
+    return Array.from(new Set(document.querySelectorAll(
+      '.el-table__body-wrapper tbody tr.el-table__row, .el-table__body-wrapper tbody tr'
+    ))).filter((row) => {
+      return isVisibleRow(row) &&
+        row.closest('.el-table__fixed-right') === null &&
+        row.closest('.el-table__fixed') === null;
     });
   }
 
-  function findExactRowAction(row, label) {
-    return Array.from(row.querySelectorAll('button, a, [role="button"]')).find((control) => {
-      return isRenderable(control) &&
-        !control.disabled &&
-        control.getAttribute('aria-disabled') !== 'true' &&
-        normalizeText(control.innerText || control.textContent) === label;
-    }) || null;
+  function getFixedRightRows() {
+    return Array.from(new Set(document.querySelectorAll(
+      '.el-table__fixed-right tbody tr.el-table__row, .el-table__fixed-right tbody tr'
+    ))).filter(isVisibleRow);
+  }
+
+  function getExactEvaluateCandidates(container) {
+    const candidates = Array.from(container.querySelectorAll('a, button, span, div, .cell, [role="button"]')).filter((element) => {
+      return isRenderable(element) &&
+        !element.disabled &&
+        element.getAttribute('aria-disabled') !== 'true' &&
+        normalizeText(element.innerText || element.textContent) === '评价';
+    });
+    const normalized = candidates.map((element) => {
+      const clickable = element.closest('a, button, [role="button"]');
+      return clickable && normalizeText(clickable.innerText || clickable.textContent) === '评价' ? clickable : element;
+    });
+    return Array.from(new Set(normalized)).sort((left, right) => {
+      const leftPreferred = left.matches('a, button, [role="button"]') ? 0 : 1;
+      const rightPreferred = right.matches('a, button, [role="button"]') ? 0 : 1;
+      return leftPreferred - rightPreferred;
+    });
+  }
+
+  function getPageEvaluateActions() {
+    return getExactEvaluateCandidates(document).filter((element) => {
+      return !element.closest(`#${BUTTON_ID}`) &&
+        normalizeText(element.innerText || element.textContent) === '评价';
+    });
+  }
+
+  function findEvaluateActionByRowIndex(rowIndex) {
+    const mainRows = getMainTableRows();
+    const fixedRightRows = getFixedRightRows();
+    const actionRow = fixedRightRows.length ? fixedRightRows[rowIndex] : mainRows[rowIndex];
+    const rowAction = actionRow ? getExactEvaluateCandidates(actionRow)[0] : null;
+    if (rowAction) return rowAction;
+    const pageActions = getPageEvaluateActions();
+    const mainRow = mainRows[rowIndex];
+    if (mainRow) {
+      const rowRect = mainRow.getBoundingClientRect();
+      const visuallyAligned = pageActions.find((action) => {
+        const actionRect = action.getBoundingClientRect();
+        const actionCenter = actionRect.top + actionRect.height / 2;
+        return actionCenter >= rowRect.top - 2 && actionCenter <= rowRect.bottom + 2;
+      });
+      if (visuallyAligned) return visuallyAligned;
+    }
+    return pageActions[rowIndex] || null;
   }
 
   function findUnfilledRows() {
-    return getEvaluationRows().filter((row) => {
-      const text = normalizeText(row.innerText);
-      return text.includes('未填写') &&
-        !text.includes('未提交') &&
-        !text.includes('已提交') &&
-        Boolean(findExactRowAction(row, '评价'));
-    });
+    return getMainTableRows().map((row, rowIndex) => {
+      const text = normalizeText(row.innerText || row.textContent || '');
+      return {
+        row,
+        rowIndex,
+        isUnfilled: text.includes('未填写'),
+        isDraft: text.includes('未提交'),
+        isSubmitted: text.includes('已提交')
+      };
+    }).filter((item) => item.isUnfilled && !item.isDraft && !item.isSubmitted);
   }
 
   function getRowIdentity(row) {
@@ -290,11 +343,37 @@
     return `course-${stableHash(text)}`;
   }
 
-  function clickRowEvaluate(row) {
-    const action = findExactRowAction(row, '评价');
-    if (!action || normalizeText(action.innerText || action.textContent) === '查看') return false;
+  function clickEvaluateByRowIndex(rowIndex) {
+    const action = findEvaluateActionByRowIndex(rowIndex);
+    if (!action || normalizeText(action.innerText || action.textContent) !== '评价') return false;
     action.click();
     return true;
+  }
+
+  function getListDiagnostics() {
+    const mainRows = getMainTableRows();
+    const fixedRightRows = getFixedRightRows();
+    let unfilledCount = 0;
+    let draftCount = 0;
+    let submittedCount = 0;
+    for (const row of mainRows) {
+      const text = normalizeText(row.innerText || row.textContent || '');
+      if (text.includes('未填写')) unfilledCount += 1;
+      if (text.includes('未提交')) draftCount += 1;
+      if (text.includes('已提交')) submittedCount += 1;
+    }
+    const evaluateActionCount = mainRows.reduce((count, row, rowIndex) => {
+      return count + (findEvaluateActionByRowIndex(rowIndex) ? 1 : 0);
+    }, 0);
+    return {
+      pageType: 'list',
+      mainRowsCount: mainRows.length,
+      fixedRightRowsCount: fixedRightRows.length,
+      unfilledCount,
+      draftCount,
+      submittedCount,
+      evaluateActionCount
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -631,8 +710,8 @@
     }
 
     const processed = new Set([...queue.processed, ...queue.failed]);
-    const nextRow = findUnfilledRows().find((row) => !processed.has(getRowIdentity(row)));
-    if (!nextRow) {
+    const nextItem = findUnfilledRows().find((item) => !processed.has(getRowIdentity(item.row)));
+    if (!nextItem) {
       queue.running = false;
       queue.phase = 'complete';
       queue.currentId = '';
@@ -646,12 +725,12 @@
     const button = document.getElementById(BUTTON_ID);
     if (button) button.disabled = true;
     updateButtonText('继续下一门...');
-    queue.currentId = getRowIdentity(nextRow);
+    queue.currentId = getRowIdentity(nextItem.row);
     queue.phase = 'entering';
     queue.lastActionAt = Date.now();
     saveQueueState(queue);
 
-    if (!clickRowEvaluate(nextRow)) {
+    if (!clickEvaluateByRowIndex(nextItem.rowIndex)) {
       queue.running = false;
       queue.phase = 'failed';
       if (!queue.failed.includes(queue.currentId)) queue.failed.push(queue.currentId);
@@ -671,9 +750,14 @@
 
   function startQueue() {
     if (!isListPage() || state.busy) return;
+    const diagnostics = getListDiagnostics();
+    console.log({ ...diagnostics });
     const rows = findUnfilledRows();
     if (!rows.length) {
-      window.alert('没有发现状态为“未填写”的课程。');
+      const pageText = document.body?.innerText || '';
+      window.alert(pageText.includes('未填写')
+        ? '页面中检测到“未填写”文字，但没有成功匹配表格行。可能是表格结构变化，请打开控制台查看诊断信息。'
+        : '没有发现状态为“未填写”的课程。');
       return;
     }
     const approved = window.confirm(
