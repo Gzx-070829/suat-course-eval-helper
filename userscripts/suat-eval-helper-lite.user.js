@@ -4,6 +4,10 @@
 // @version      0.1.0
 // @description  深圳理工大学教评辅助预填工具：自动选择分值、填写模板评价；不自动保存、不自动提交
 // @author       Gzx-070829
+// @homepageURL  https://github.com/Gzx-070829/suat-course-eval-helper
+// @supportURL   https://github.com/Gzx-070829/suat-course-eval-helper/issues
+// @downloadURL  https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-lite.user.js
+// @updateURL    https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-lite.user.js
 // @match        https://education.siat.ac.cn/*
 // @match        https://education.suat-sz.edu.cn/*
 // @run-at       document-end
