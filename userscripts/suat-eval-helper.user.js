@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name         SIAT/SUAT 教师评价辅助填写 Lite
+// @name         SIAT/SUAT 教师评价辅助填写器
 // @namespace    https://github.com/Gzx-070829/suat-course-eval-helper
-// @version      1.0.0-beta
-// @description  深圳理工大学教评离线智能辅助工具：本地生成可编辑草稿；不联网、不自动保存、不自动提交
+// @version      0.2.0
+// @description  深圳理工大学教评辅助预填工具：本地运行，不联网，不自动保存，不自动提交
 // @author       Gzx-070829
 // @homepageURL  https://github.com/Gzx-070829/suat-course-eval-helper
 // @supportURL   https://github.com/Gzx-070829/suat-course-eval-helper/issues
-// @downloadURL  https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-lite.user.js
-// @updateURL    https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-lite.user.js
+// @downloadURL  https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper.user.js
+// @updateURL    https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper.user.js
 // @match        https://education.siat.ac.cn/*
 // @match        https://education.suat-sz.edu.cn/*
 // @run-at       document-end
@@ -17,15 +17,18 @@
 (function () {
   'use strict';
 
+  // This script must never click save, submit, confirm, or final action buttons.
+
   // ---------------------------------------------------------------------------
   // constants
   // ---------------------------------------------------------------------------
 
   const SCRIPT = Object.freeze({
-    id: 'suat-eval-helper-lite',
-    name: 'SIAT/SUAT 教师评价辅助填写 Lite',
-    version: '1.0.0-beta'
+    id: 'suat-eval-helper',
+    name: 'SIAT/SUAT 教师评价辅助填写器',
+    version: '0.2.0'
   });
+  const SETTINGS_KEY = `${SCRIPT.id}:settings`;
   const IDS = Object.freeze({
     button: `${SCRIPT.id}-button`,
     panel: `${SCRIPT.id}-panel`,
@@ -45,31 +48,10 @@
     ['content', ['内容', '重点', '难点', '结构', '进度', '安排', '知识', '章节', '讲解']],
     ['advantage', ['优点', '满意', '特色', '收获', '值得肯定', '教学效果', '认可', '亮点']]
   ]);
-  const DRAFTS = Object.freeze({
-    natural: {
-      advantage: ['课程整体安排较为清晰，讲解重点明确，有助于理解和掌握相关内容。', '老师教学态度认真，课堂内容组织较清楚，对学生理解课程核心内容有帮助。'],
-      suggestion: ['希望后续可以结合课程实际情况，适当增加案例讲解和重点内容总结，帮助学生进一步理解课程内容。', '建议在重点和难点部分适当放慢节奏，并增加一些阶段性回顾，便于学生及时梳理。'],
-      interaction: ['希望课堂中可以适当增加提问、讨论或答疑环节，让学生有更多参与和反馈的机会。', '建议增加一些课堂互动或即时反馈，帮助老师了解学生的理解情况，也提高课堂参与感。'],
-      practice: ['希望后续可以适当增加案例、练习或实践环节，帮助学生将课程内容与实际应用结合起来。', '建议结合课程内容安排更多练习、案例或项目式任务，帮助学生提升实际应用能力。'],
-      content: ['课程内容安排较为完整，希望讲解时进一步突出重点和难点，并在关键章节增加总结。', '建议对课程中的核心知识点进行更清晰的梳理，帮助学生建立整体框架。'],
-      general: ['课程整体体验较好，希望后续继续优化内容安排和课堂交流，帮助学生更好地理解和掌握课程内容。', '老师教学认真，课程整体安排较清晰，希望后续可以结合更多例子和互动进一步提升学习效果。']
-    },
-    concise: {
-      advantage: ['课程安排清晰，重点较明确，有助于理解核心内容。', '课堂内容组织较清楚，整体学习体验较好。'],
-      suggestion: ['建议适当增加案例和重点总结，帮助学生及时梳理。', '希望重点难点部分适当放慢节奏，并增加阶段性回顾。'],
-      interaction: ['希望适当增加提问、讨论和答疑，提高课堂参与感。', '建议增加课堂互动和即时反馈，及时了解学习情况。'],
-      practice: ['希望增加案例、练习或实践，帮助理解实际应用。', '建议适当增加项目式任务，提升实际应用能力。'],
-      content: ['希望进一步突出重点难点，并在关键章节增加总结。', '建议更清晰地梳理核心知识点，帮助建立整体框架。'],
-      general: ['课程整体体验较好，希望继续优化内容安排和课堂交流。', '课程安排较清晰，希望适当增加例子和互动。']
-    },
-    constructive: {
-      advantage: ['课程整体安排较为清晰，讲解重点也比较明确，对理解核心内容有帮助。建议继续保持清楚的内容组织，并在关键章节加入简短回顾，方便学生形成完整的知识框架。', '老师教学态度认真，课程内容组织较清楚，能够帮助学生把握主要知识。后续若能结合重点内容增加阶段性总结，学习过程会更加连贯。'],
-      suggestion: ['建议在重点和难点部分适当放慢节奏，并结合课程实际增加案例讲解和阶段性回顾，让学生能够及时发现疑问、梳理知识并跟上课程进度。', '希望后续进一步优化内容节奏，在核心章节增加总结、示例和答疑时间，帮助学生更稳妥地理解并巩固课程内容。'],
-      interaction: ['希望课堂中适当增加提问、讨论和集中答疑环节，并为学生留出表达疑问的时间。这样既能获得更及时的学习反馈，也有助于提升课堂参与感。', '建议在关键知识点后加入简短互动或即时反馈，了解学生的理解情况，再针对常见疑问进行补充说明，使课堂交流更加充分。'],
-      practice: ['希望结合课程内容安排更多案例、练习或小型实践任务，并在完成后进行讲解和总结，帮助学生理解知识如何应用，同时及时发现掌握不牢的部分。', '建议适当增加与核心内容对应的练习、案例或项目式任务，并给出清晰反馈，帮助学生把理论知识与实际应用联系起来。'],
-      content: ['课程内容安排较为完整，建议讲解时进一步突出重点和难点，并在关键章节加入结构化总结和知识联系，帮助学生建立更清晰的整体框架。', '建议对核心知识点进行更清楚的分层梳理，适当说明章节之间的联系，并通过阶段性回顾帮助学生跟上课程进度。'],
-      general: ['课程整体体验较好，希望后续继续优化内容安排、重点总结和课堂交流，并结合适量案例或练习，帮助学生更好地理解、巩固和应用课程内容。', '课程整体安排较清晰，建议后续在关键内容处增加总结、例子和互动反馈，让学生更容易把握重点并及时解决学习中的疑问。']
-    }
+  const DEFAULT_SETTINGS = Object.freeze({
+    rating: 'verySatisfied',
+    advantageTemplate: '课程整体安排较为清晰，讲解重点明确，有助于理解和掌握相关内容。',
+    suggestionTemplate: '希望后续可以适当增加案例讲解、课堂互动或重点总结，帮助学生进一步理解课程内容。'
   });
   const TIMING = Object.freeze({ route: 350, open: 260, settle: 140, scroll: 100 });
 
@@ -152,6 +134,47 @@
 
   function nowText() {
     return new Date().toLocaleString('zh-CN', { hour12: false });
+  }
+
+  function loadSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      return {
+        rating: ['verySatisfied', 'satisfied', 'none'].includes(saved.rating) ? saved.rating : DEFAULT_SETTINGS.rating,
+        advantageTemplate: normalizeText(saved.advantageTemplate) || DEFAULT_SETTINGS.advantageTemplate,
+        suggestionTemplate: normalizeText(saved.suggestionTemplate) || DEFAULT_SETTINGS.suggestionTemplate
+      };
+    } catch (error) {
+      markError('读取本地设置失败', error);
+      return { ...DEFAULT_SETTINGS };
+    }
+  }
+
+  function readPanelSettings() {
+    const panel = document.getElementById(IDS.panel);
+    return {
+      rating: panel?.querySelector('[data-field="rating"]')?.value || DEFAULT_SETTINGS.rating,
+      advantageTemplate: panel?.querySelector('[data-field="advantageTemplate"]')?.value.trim() || DEFAULT_SETTINGS.advantageTemplate,
+      suggestionTemplate: panel?.querySelector('[data-field="suggestionTemplate"]')?.value.trim() || DEFAULT_SETTINGS.suggestionTemplate
+    };
+  }
+
+  function saveSettings() {
+    const settings = readPanelSettings();
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      refreshPreflight();
+      setStatus('评分和两段模板已保存到当前浏览器。', 'success');
+    } catch (error) {
+      markError('保存本地设置失败', error);
+      setStatus('设置保存失败，请检查浏览器存储权限。', 'error');
+    }
+  }
+
+  function ratingLabel(rating) {
+    if (rating === 'verySatisfied') return '非常满意';
+    if (rating === 'satisfied') return '满意';
+    return '不自动选择';
   }
 
   function getSchoolPageText() {
@@ -396,9 +419,9 @@
     return best.type;
   }
 
-  function generateLocalDraft(questionType, style, questionText) {
-    const collection = DRAFTS[style]?.[questionType] || DRAFTS[style]?.general || DRAFTS.natural.general;
-    return collection[stableHash(`${questionType}|${style}|${questionText}`) % collection.length];
+  function generateLocalDraft(questionType, settings) {
+    const suggestionTypes = new Set(['suggestion', 'interaction', 'practice', 'content']);
+    return suggestionTypes.has(questionType) ? settings.suggestionTemplate : settings.advantageTemplate;
   }
 
   function captureDraftEdits() {
@@ -412,9 +435,9 @@
     }
   }
 
-  function scanAndGenerate() {
+  function scanAndGenerate(options = {}) {
     captureDraftEdits();
-    const style = document.querySelector(`#${IDS.panel} [data-field="style"]`)?.value || 'natural';
+    const settings = readPanelSettings();
     const textareas = findSchoolTextareas();
     const unknown = [];
     state.drafts = textareas.map((textarea, index) => {
@@ -428,7 +451,7 @@
         question: question.text,
         recognized: question.recognized,
         type,
-        draft: generateLocalDraft(type, style, question.text),
+        draft: generateLocalDraft(type, settings),
         skip: existing,
         existing
       };
@@ -437,7 +460,30 @@
     state.diagnostics.lastErrorType = unknown.length ? '部分题目文本识别失败' : '无';
     refreshDiagnosticCounts();
     renderDraftCards();
-    setStatus(textareas.length ? `已生成 ${textareas.length} 份本地草稿，请逐题检查和修改。` : '没有找到可见文本框，请确认已进入具体课程评价页面。', textareas.length ? 'success' : 'error');
+    refreshPreflight();
+    if (!options.quiet) {
+      setStatus(textareas.length ? `预检完成：发现 ${textareas.length} 个文本框，请检查两段模板和逐题预览。` : '没有找到可见文本框，请确认已进入具体课程评价页面。', textareas.length ? 'success' : 'error');
+    }
+  }
+
+  function refreshPreflight() {
+    const box = document.querySelector(`#${IDS.panel} [data-role="preflight"]`);
+    if (!box) return;
+    const signals = getPageSignals();
+    const settings = readPanelSettings();
+    const ratingCount = findRatingCandidates().length;
+    const textareaCount = findSchoolTextareas().length;
+    box.innerHTML = `
+      <h3>预检结果</h3>
+      <dl>
+        <div><dt>识别为教评页面</dt><dd>${signals.recognized ? '是' : '否'}</dd></div>
+        <div><dt>发现评分下拉框</dt><dd>${ratingCount} 个</dd></div>
+        <div><dt>发现文本框</dt><dd>${textareaCount} 个</dd></div>
+        <div><dt>将选择的评分</dt><dd>${escapeHtml(ratingLabel(settings.rating))}</dd></div>
+      </dl>
+      <p><strong>优点评价模板：</strong>${escapeHtml(settings.advantageTemplate)}</p>
+      <p><strong>建议评价模板：</strong>${escapeHtml(settings.suggestionTemplate)}</p>
+    `;
   }
 
   // ---------------------------------------------------------------------------
@@ -446,15 +492,18 @@
 
   async function applyDrafts() {
     if (state.busy) return;
+    if (!state.drafts.length) scanAndGenerate({ quiet: true });
     captureDraftEdits();
     if (!state.drafts.length) {
       setStatus('请先点击“扫描并生成草稿”。', 'error');
       return;
     }
-    const rating = document.querySelector(`#${IDS.panel} [data-field="rating"]`)?.value || 'none';
+    const settings = readPanelSettings();
+    const rating = settings.rating;
     const selectedDrafts = state.drafts.filter((item) => !item.skip && item.draft.trim());
+    const preflight = getPageSignals();
     const approved = window.confirm(
-      `即将预填 ${selectedDrafts.length} 个开放题，并${rating === 'none' ? '不填写评分' : `尝试为评分空白项选择“${rating === 'verySatisfied' ? '非常满意' : '满意'}”`}。\n\n只填写空白项；不会自动保存或提交。是否继续？`
+      `预检结果：\n\n识别为教评页面：${preflight.recognized ? '是' : '否'}\n发现评分下拉框：${findRatingCandidates().length} 个\n发现文本框：${findSchoolTextareas().length} 个\n将选择的评分：${ratingLabel(rating)}\n将填写的模板：优点评价模板、建议评价模板\n\n即将预填 ${selectedDrafts.length} 个空白开放题。只填写空白项；不会自动保存或提交。是否继续？`
     );
     if (!approved) return;
 
@@ -627,6 +676,13 @@
       #${IDS.panel} h2 { margin: 0 0 6px; font-size: 18px; }
       #${IDS.panel} .suat-note { margin: 4px 0; color: #526078; font-size: 12px; }
       #${IDS.panel} .suat-safe { margin: 12px 0; padding: 9px 11px; border-radius: 9px; background: #eef7f2; color: #245c43; font-size: 12px; }
+      #${IDS.panel} .suat-templates textarea { min-height: 72px; }
+      #${IDS.panel} [data-role="preflight"] { margin: 12px 0; padding: 10px 11px; border: 1px solid #cfe0f5; border-radius: 10px; background: #f5f9ff; }
+      #${IDS.panel} [data-role="preflight"] h3 { margin: 0 0 7px; font-size: 14px; }
+      #${IDS.panel} [data-role="preflight"] dl { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin: 0 0 8px; }
+      #${IDS.panel} [data-role="preflight"] dl div { display: flex; justify-content: space-between; gap: 8px; }
+      #${IDS.panel} [data-role="preflight"] dt { color: #5b6678; } #${IDS.panel} [data-role="preflight"] dd { margin: 0; font-weight: 650; }
+      #${IDS.panel} [data-role="preflight"] p { margin: 6px 0; font-size: 12px; overflow-wrap: anywhere; }
       #${IDS.panel} .suat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
       #${IDS.panel} label { display: block; margin: 8px 0 4px; font-size: 12px; font-weight: 650; color: #3c465a; }
       #${IDS.panel} select, #${IDS.panel} textarea { width: 100%; border: 1px solid #cbd5e3; border-radius: 8px; padding: 8px 9px; color: #172033; background: #fff; font: inherit; }
@@ -677,7 +733,7 @@
         <textarea data-draft-editor="${escapeHtml(item.id)}" ${item.existing ? 'disabled' : ''}>${escapeHtml(item.draft)}</textarea>
         <label class="suat-check"><input type="checkbox" data-draft-skip="${escapeHtml(item.id)}" ${item.skip ? 'checked' : ''} ${item.existing ? 'disabled' : ''}> 本题不填写</label>
       </article>
-    `).join('') : '<p class="suat-note">点击“扫描并生成草稿”后，可在这里逐题预览和修改。</p>';
+    `).join('') : '<p class="suat-note">打开面板后会先预检，并在这里显示逐题预览。</p>';
     for (const item of state.drafts) {
       container.querySelector(`[data-draft-editor="${item.id}"]`)?.addEventListener('input', (event) => { item.draft = event.target.value; });
       container.querySelector(`[data-draft-skip="${item.id}"]`)?.addEventListener('change', (event) => { item.skip = event.target.checked; });
@@ -694,48 +750,63 @@
       button.addEventListener('click', () => {
         state.open = !state.open;
         const panel = document.getElementById(IDS.panel);
-        if (panel) panel.hidden = !state.open;
+        if (panel) {
+          panel.hidden = !state.open;
+          if (state.open) {
+            scanAndGenerate({ quiet: true });
+            setStatus('预检完成。请核对评分、模板和控件数量，确认后再预填。', 'success');
+          }
+        }
       });
       document.body.appendChild(button);
     }
     if (document.getElementById(IDS.panel)) return;
+    const settings = loadSettings();
     const panel = document.createElement('section');
     panel.id = IDS.panel;
     panel.hidden = !state.open;
     panel.setAttribute('aria-label', '离线教评辅助面板');
     panel.innerHTML = `
-      <h2>教评辅助 · Lite</h2>
-      <p class="suat-note">Lite 版完全离线，不联网。</p>
+      <h2>教评辅助填写器</h2>
+      <p class="suat-note">本工具完全在本地运行，不联网。</p>
       <p class="suat-note">本工具不会自动保存或提交，请检查后手动保存。</p>
-      <div class="suat-grid">
-        <div><label>评分选择</label><select data-field="rating"><option value="verySatisfied">非常满意</option><option value="satisfied">满意</option><option value="none">不填写评分</option></select></div>
-        <div><label>文本风格</label><select data-field="style"><option value="natural">自然正式</option><option value="concise">简洁</option><option value="constructive">具体建设性</option></select></div>
+      <label>评分选择</label><select data-field="rating"><option value="verySatisfied">非常满意</option><option value="satisfied">满意</option><option value="none">不自动选择</option></select>
+      <div class="suat-templates">
+        <label>优点评价模板</label><textarea data-field="advantageTemplate">${escapeHtml(settings.advantageTemplate)}</textarea>
+        <label>建议评价模板</label><textarea data-field="suggestionTemplate">${escapeHtml(settings.suggestionTemplate)}</textarea>
       </div>
       <div class="suat-safe">默认只填写空白项；已有评分和文本不会覆盖。如需修改，请先在学校页面手动清空。</div>
+      <div data-role="preflight"></div>
       <div class="suat-actions">
-        <button type="button" data-action="scan">扫描并生成草稿</button>
-        <button type="button" data-action="apply">采用并预填</button>
+        <button type="button" data-action="scan">刷新预检</button>
+        <button type="button" data-action="apply">确认并预填</button>
+        <button type="button" data-action="save-settings">保存设置</button>
         <button type="button" data-action="undo">撤销本次填写</button>
         <button type="button" data-action="diagnostics">查看诊断信息</button>
         <button type="button" data-action="close">关闭</button>
       </div>
-      <div data-role="status" data-type="info" aria-live="polite">请先扫描页面，再逐题检查草稿。</div>
+      <div data-role="status" data-type="info" aria-live="polite">打开面板后会先进行预检，不会立即填写。</div>
       <div data-role="drafts"></div>
       <div data-role="diagnostics" hidden></div>
     `;
     document.body.appendChild(panel);
+    panel.querySelector('[data-field="rating"]').value = settings.rating;
     panel.querySelector('[data-action="scan"]').addEventListener('click', scanAndGenerate);
     panel.querySelector('[data-action="apply"]').addEventListener('click', applyDrafts);
+    panel.querySelector('[data-action="save-settings"]').addEventListener('click', saveSettings);
     panel.querySelector('[data-action="undo"]').addEventListener('click', undoLastApply);
     panel.querySelector('[data-action="diagnostics"]').addEventListener('click', showDiagnostics);
     panel.querySelector('[data-action="close"]').addEventListener('click', () => {
       state.open = false;
       panel.hidden = true;
     });
-    panel.querySelector('[data-field="style"]').addEventListener('change', () => {
-      if (state.drafts.length) scanAndGenerate();
-    });
+    panel.querySelector('[data-field="rating"]').addEventListener('change', refreshPreflight);
+    for (const field of ['advantageTemplate', 'suggestionTemplate']) {
+      panel.querySelector(`[data-field="${field}"]`).addEventListener('change', () => scanAndGenerate({ quiet: true }));
+      panel.querySelector(`[data-field="${field}"]`).addEventListener('input', refreshPreflight);
+    }
     renderDraftCards();
+    refreshPreflight();
   }
 
   function unmountUI() {
