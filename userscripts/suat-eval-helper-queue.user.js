@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SIAT/SUAT 教师评价辅助填写器 Queue
 // @namespace    https://github.com/Gzx-070829/suat-course-eval-helper
-// @version      0.5.1
+// @version      0.5.2
 // @description  深圳理工大学教评队列辅助预填工具：支持列表页队列填写和自动保存草稿，本地运行，不联网，不自动最终提交
 // @author       Gzx-070829
 // @homepageURL  https://github.com/Gzx-070829/suat-course-eval-helper
@@ -192,7 +192,7 @@
       startedAt: 0,
       lastActionAt: 0,
       failed: [],
-      currentId: '',
+      current: '',
       phase: 'idle'
     };
   }
@@ -203,6 +203,8 @@
       const queue = { ...createEmptyQueueState(), ...(saved && typeof saved === 'object' ? saved : {}) };
       queue.processed = Array.isArray(queue.processed) ? queue.processed.slice(0, MAX_QUEUE_ITEMS) : [];
       queue.failed = Array.isArray(queue.failed) ? queue.failed.slice(0, MAX_QUEUE_ITEMS) : [];
+      queue.current = queue.current || queue.currentId || '';
+      delete queue.currentId;
       if (queue.startedAt && Date.now() - queue.startedAt > 6 * 60 * 60 * 1000) queue.running = false;
       return queue;
     } catch (error) {
@@ -237,17 +239,62 @@
   // page detection
   // ---------------------------------------------------------------------------
 
-  function isEvaluationPage() {
-    if (!ALLOWED_HOSTS.has(location.hostname)) return false;
-    const bodyText = document.body?.innerText || '';
-    const hasRatingSelect = Boolean(document.querySelector('.el-select'));
-    const hasOpenQuestion = Boolean(document.querySelector('textarea, .el-textarea__inner'));
-    const hasAllDetailKeywords = ['课程名称', '教师', '评价详情', '设置分值'].every((keyword) => bodyText.includes(keyword));
-    return hasAllDetailKeywords || (
-      location.pathname.includes('/teaching/evaluation') &&
-      hasRatingSelect &&
-      (bodyText.includes('设置分值') || hasOpenQuestion)
-    );
+  function getPageText() {
+    return document.body?.innerText || document.body?.textContent || '';
+  }
+
+  function getDetailSignals() {
+    const text = getPageText();
+    const hasCourseName = text.includes('课程名称');
+    const hasTeacher = text.includes('教师');
+    const hasEvaluationDetail = text.includes('评价详情') || text.includes('课程评分评价') || text.includes('教师评分评价');
+    const selectCount = document.querySelectorAll('.el-select input, input.el-input__inner').length;
+    const textareaCount = document.querySelectorAll('textarea, .el-textarea__inner').length;
+    const hasSaveButton = findSafeSaveButton() !== null;
+    return {
+      hasCourseName,
+      hasTeacher,
+      hasEvaluationDetail,
+      selectCount,
+      textareaCount,
+      hasSaveButton,
+      isDetailPage: ALLOWED_HOSTS.has(location.hostname) &&
+        hasCourseName &&
+        hasTeacher &&
+        hasEvaluationDetail &&
+        selectCount >= 3
+    };
+  }
+
+  function isDetailPage() {
+    return getDetailSignals().isDetailPage;
+  }
+
+  function logDetailDiagnostics(phase) {
+    const signals = getDetailSignals();
+    console.log('[SUAT Queue] Detail diagnostics', {
+      phase,
+      href: location.href,
+      textHasCourseName: signals.hasCourseName,
+      textHasTeacher: signals.hasTeacher,
+      textHasEvaluationDetail: signals.hasEvaluationDetail,
+      selectCount: signals.selectCount,
+      textareaCount: signals.textareaCount,
+      hasSaveButton: signals.hasSaveButton,
+      isDetailPage: signals.isDetailPage
+    });
+  }
+
+  async function waitForDetailPageStable(timeoutMs = 15000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (isDetailPage()) {
+        await sleep(800);
+        if (isDetailPage()) return true;
+      }
+      await sleep(300);
+    }
+    return false;
   }
 
   function isListPage() {
@@ -548,7 +595,7 @@
   // ---------------------------------------------------------------------------
 
   async function fillCurrentDetailPage() {
-    if (!isEvaluationPage()) throw new Error('当前页面不是课程评价详情页');
+    if (!isDetailPage()) throw new Error('当前页面不是课程评价详情页');
     const operationToken = state.operationToken;
     const ratingSelects = findRatingSelects();
     const ratingPlan = createRatingPlan(ratingSelects.length);
@@ -567,11 +614,11 @@
       }
     }
 
-    if (operationToken === state.operationToken && isEvaluationPage()) textareaCount = await fillOpenQuestions();
+    if (operationToken === state.operationToken && isDetailPage()) textareaCount = await fillOpenQuestions();
     return { ratingTotal: ratingSelects.length, verySatisfiedCount, satisfiedCount, textareaCount };
   }
 
-  function findStrictSaveButton() {
+  function findSafeSaveButton() {
     const candidates = Array.from(document.querySelectorAll('button, .el-button, [role="button"]')).filter((control) => {
       return control.id !== BUTTON_ID &&
         isRenderable(control) &&
@@ -583,9 +630,9 @@
   }
 
   async function saveCurrentDetailPage() {
-    if (!isEvaluationPage()) return { success: false, reason: '当前页面不是评价详情页' };
+    if (!isDetailPage()) return { success: false, reason: '当前页面不是评价详情页' };
     await sleep(500);
-    const saveButton = findStrictSaveButton();
+    const saveButton = findSafeSaveButton();
     if (!saveButton) return { success: false, reason: '没有找到唯一且文字严格等于“保存”的按钮' };
 
     const oldSuccessNodes = new Set(Array.from(document.querySelectorAll('.el-message--success, .el-notification, [class*="success"]')));
@@ -622,14 +669,35 @@
 
   async function returnToListPage() {
     updateButtonText('返回列表...');
+    const queue = loadQueueState();
+    if (queue.running) {
+      queue.phase = 'awaiting-list';
+      queue.lastActionAt = Date.now();
+      saveQueueState(queue);
+    }
     const backControl = findBackControl();
     if (backControl) backControl.click();
     else history.back();
     await sleep(1200);
   }
 
+  function stopQueueWithMessage(message) {
+    const queue = loadQueueState();
+    queue.running = false;
+    queue.phase = 'failed';
+    if (queue.current && !queue.failed.includes(queue.current)) queue.failed.push(queue.current);
+    queue.lastActionAt = Date.now();
+    saveQueueState(queue);
+    state.busy = false;
+    const button = document.getElementById(BUTTON_ID);
+    if (button) button.disabled = false;
+    updateButtonText('教评辅助');
+    logDetailDiagnostics(queue.phase);
+    window.alert(`${message}\n\n请打开控制台查看详情页诊断信息。`);
+  }
+
   async function processCurrentDetailPage(fromQueue) {
-    if (state.busy || !isEvaluationPage()) return;
+    if (state.busy || !isDetailPage()) return;
     state.busy = true;
     state.operationToken += 1;
     const button = document.getElementById(BUTTON_ID);
@@ -638,13 +706,13 @@
 
     let queue = loadQueueState();
     if (fromQueue) {
-      if (!queue.running || queue.phase !== 'entering') {
+      if (!queue.running) {
         state.busy = false;
         if (button) button.disabled = false;
         updateButtonText('教评辅助');
         return;
       }
-      queue.phase = 'filling';
+      queue.phase = 'filling-detail';
       queue.lastActionAt = Date.now();
       saveQueueState(queue);
     }
@@ -652,17 +720,16 @@
     try {
       await fillCurrentDetailPage();
       updateButtonText('保存中...');
+      if (fromQueue) {
+        queue = loadQueueState();
+        queue.phase = 'saving-detail';
+        queue.lastActionAt = Date.now();
+        saveQueueState(queue);
+      }
       const saveResult = await saveCurrentDetailPage();
       if (!saveResult.success) {
-        if (fromQueue) {
-          queue = loadQueueState();
-          queue.running = false;
-          queue.phase = 'failed';
-          if (queue.currentId && !queue.failed.includes(queue.currentId)) queue.failed.push(queue.currentId);
-          queue.lastActionAt = Date.now();
-          saveQueueState(queue);
-        }
-        window.alert(`自动保存失败：${saveResult.reason}\n\n${fromQueue ? '队列已停止，' : ''}请手动检查并处理当前课程。`);
+        if (fromQueue) stopQueueWithMessage(`自动保存失败：${saveResult.reason}`);
+        else window.alert(`自动保存失败：${saveResult.reason}\n\n请手动检查并处理当前课程。`);
         return;
       }
 
@@ -672,22 +739,20 @@
       }
 
       queue = loadQueueState();
-      if (queue.currentId && !queue.processed.includes(queue.currentId)) queue.processed.push(queue.currentId);
-      queue.currentId = '';
-      queue.phase = 'returning';
+      if (queue.current && !queue.processed.includes(queue.current)) queue.processed.push(queue.current);
+      queue.current = '';
+      queue.phase = 'returning-list';
       queue.lastActionAt = Date.now();
       saveQueueState(queue);
       if (!isListPage()) await returnToListPage();
-    } catch (error) {
-      console.error(`[${SCRIPT_ID}] 处理当前课程失败：`, error);
-      if (fromQueue) {
-        queue = loadQueueState();
-        queue.running = false;
-        queue.phase = 'failed';
-        if (queue.currentId && !queue.failed.includes(queue.currentId)) queue.failed.push(queue.currentId);
+      else {
+        queue.phase = 'awaiting-list';
         saveQueueState(queue);
       }
-      window.alert(`处理当前课程失败：${error.message}\n\n队列已停止，请手动处理。`);
+    } catch (error) {
+      console.error(`[${SCRIPT_ID}] 处理当前课程失败：`, error);
+      if (fromQueue) stopQueueWithMessage(`处理当前课程失败：${error.message}`);
+      else window.alert(`处理当前课程失败：${error.message}\n\n请手动处理。`);
     } finally {
       state.busy = false;
       const currentButton = document.getElementById(BUTTON_ID);
@@ -695,6 +760,26 @@
       updateButtonText('教评辅助');
       scheduleSync();
     }
+  }
+
+  async function processCurrentDetailPageInQueue(timeoutMs = 15000) {
+    if (state.busy) return;
+    state.busy = true;
+    const button = document.getElementById(BUTTON_ID);
+    if (button) button.disabled = true;
+    updateButtonText('填写中...');
+    const stable = await waitForDetailPageStable(timeoutMs);
+    const queue = loadQueueState();
+    logDetailDiagnostics(queue.phase);
+    state.busy = false;
+    if (button) button.disabled = false;
+
+    if (stable || isDetailPage()) {
+      console.log('[SUAT Queue] Already on detail page, continue filling.');
+      await processCurrentDetailPage(true);
+      return;
+    }
+    stopQueueWithMessage('进入详情页超时，请确认是否已经进入课程评价详情页。');
   }
 
   async function processNextUnfilledCourse() {
@@ -714,7 +799,7 @@
     if (!nextItem) {
       queue.running = false;
       queue.phase = 'complete';
-      queue.currentId = '';
+      queue.current = '';
       queue.lastActionAt = Date.now();
       saveQueueState(queue);
       window.alert('已处理完成。请在列表页检查所有课程状态，确认无误后再手动点击最终提交评价。');
@@ -725,27 +810,21 @@
     const button = document.getElementById(BUTTON_ID);
     if (button) button.disabled = true;
     updateButtonText('继续下一门...');
-    queue.currentId = getRowIdentity(nextItem.row);
-    queue.phase = 'entering';
+    queue.current = getRowIdentity(nextItem.row);
+    queue.phase = 'awaiting-detail';
     queue.lastActionAt = Date.now();
     saveQueueState(queue);
 
     if (!clickEvaluateByRowIndex(nextItem.rowIndex)) {
-      queue.running = false;
-      queue.phase = 'failed';
-      if (!queue.failed.includes(queue.currentId)) queue.failed.push(queue.currentId);
-      saveQueueState(queue);
       state.busy = false;
-      if (button) button.disabled = false;
-      updateButtonText('教评辅助');
-      window.alert('无法安全点击当前“未填写”课程的“评价”按钮，队列已停止。');
+      stopQueueWithMessage('无法安全点击当前“未填写”课程的“评价”按钮，队列已停止。');
       return;
     }
 
-    await sleep(500);
+    logDetailDiagnostics(queue.phase);
     state.busy = false;
     if (button) button.disabled = false;
-    scheduleSync();
+    await processCurrentDetailPageInQueue(15000);
   }
 
   function startQueue() {
@@ -774,35 +853,30 @@
 
   function maybeContinueQueue() {
     window.clearTimeout(state.continueTimer);
-    const queue = loadQueueState();
+    let queue = loadQueueState();
     if (!queue.running || state.busy) return;
 
+    if (isDetailPage()) {
+      updateButtonText('填写中...');
+      state.continueTimer = window.setTimeout(() => processCurrentDetailPageInQueue(15000), 300);
+      return;
+    }
+
     if (isListPage()) {
-      if (queue.phase === 'entering' && queue.currentId) {
-        if (Date.now() - queue.lastActionAt > 5000) {
-          queue.running = false;
-          queue.phase = 'failed';
-          if (!queue.failed.includes(queue.currentId)) queue.failed.push(queue.currentId);
-          saveQueueState(queue);
-          window.alert('进入课程评价详情页失败，队列已停止。');
-        } else {
-          state.continueTimer = window.setTimeout(maybeContinueQueue, 800);
-        }
+      if (queue.phase === 'awaiting-detail' && queue.current) {
+        const elapsed = Date.now() - queue.lastActionAt;
+        const remaining = Math.max(1000, 15000 - elapsed);
+        state.continueTimer = window.setTimeout(() => processCurrentDetailPageInQueue(remaining), 300);
         return;
       }
+      if (['filling-detail', 'saving-detail'].includes(queue.phase) && queue.current) {
+        if (!queue.processed.includes(queue.current)) queue.processed.push(queue.current);
+        queue.current = '';
+        queue.phase = 'awaiting-list';
+        queue.lastActionAt = Date.now();
+        saveQueueState(queue);
+      }
       state.continueTimer = window.setTimeout(processNextUnfilledCourse, 900);
-      return;
-    }
-    if (isEvaluationPage() && queue.phase === 'entering') {
-      state.continueTimer = window.setTimeout(() => processCurrentDetailPage(true), 700);
-      return;
-    }
-    if (isEvaluationPage() && queue.phase === 'filling' && Date.now() - queue.lastActionAt > 15000) {
-      queue.running = false;
-      queue.phase = 'failed';
-      if (queue.currentId && !queue.failed.includes(queue.currentId)) queue.failed.push(queue.currentId);
-      saveQueueState(queue);
-      window.alert('检测到上一次课程处理被中断，队列已停止，请手动检查当前课程。');
     }
   }
 
@@ -812,7 +886,7 @@
       window.alert('Queue 队列状态已清除。');
       return;
     }
-    if (isEvaluationPage()) processCurrentDetailPage(false);
+    if (isDetailPage()) processCurrentDetailPage(false);
     else if (isListPage()) startQueue();
   }
 
@@ -867,7 +941,7 @@
   }
 
   function syncWithPage() {
-    if (isEvaluationPage() || isListPage()) {
+    if (isDetailPage() || isListPage()) {
       mountButton();
       maybeContinueQueue();
     } else unmountButton();
