@@ -13,6 +13,16 @@
 2. 点击下面的 Lite 版安装链接，并在 Tampermonkey 页面点击“安装”。
 3. 正常登录学校系统并打开教评页面，点击右下角“教评辅助”，检查草稿后再由你手动保存。
 
+### 安装图示
+
+<img width="67" height="56" alt="浏览器工具栏中的 Tampermonkey 图标" src="https://github.com/user-attachments/assets/6161c2cf-6384-4855-9038-8e800c3bc63a" />
+
+<img width="1091" height="197" alt="在浏览器扩展商店中找到 Tampermonkey" src="https://github.com/user-attachments/assets/78098c66-cc7e-40fd-8aa5-2f07965c0d28" />
+
+<img width="2553" height="1278" alt="安装 Tampermonkey 浏览器扩展" src="https://github.com/user-attachments/assets/4a4f1322-9969-4a9d-92ed-1b786303eb6d" />
+
+<img width="1115" height="275" alt="确认 Tampermonkey 已安装并启用" src="https://github.com/user-attachments/assets/c525da09-e50d-4b2b-810e-08542d146cdc" />
+
 不需要 `git clone`、npm、下载 ZIP 或复制代码。
 
 ## 一键安装
