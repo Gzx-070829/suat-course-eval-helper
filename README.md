@@ -1,23 +1,32 @@
-# suat-course-eval-helper
+# SIAT/SUAT 教师评价辅助填写器
 
-深圳理工大学 / 原 SIAT 课程评价极简辅助预填脚本。本地运行、不联网，填写后由你检查并手动保存。
+适用于深圳理工大学 / 原 SIAT 教育信息化平台。
+
+本项目本地运行，不联网，不使用 AI，不收集数据。
 
 ## 一键安装
 
-### [点击安装教评辅助填写器](https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper.user.js)
+### [Lite 版：推荐大多数同学使用](https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-lite.user.js)
 
-不需要会编程，不需要 GitHub 账号，也不需要 npm、下载 ZIP 或复制代码。
+只填写当前课程，不自动保存，不自动提交。填写完成后，请检查并手动保存。
 
-## 使用方法
+### [Queue 版：批量队列版](https://raw.githubusercontent.com/Gzx-070829/suat-course-eval-helper/main/userscripts/suat-eval-helper-queue.user.js)
+
+支持从列表页逐门处理状态为“未填写”的课程，自动填写并点击详情页严格等于“保存”的按钮。**不会点击最终“提交评价”。**
+
+> 重要：Lite 和 Queue 二选一，不要同时启用。如果两个版本都已安装，请在 Tampermonkey 管理面板停用其中一个。
+
+## 安装与使用
 
 1. 安装 [Tampermonkey / 篡改猴](https://www.tampermonkey.net/)浏览器扩展。
-2. 点击上方“一键安装”，再在 Tampermonkey 页面点击“安装”。
-3. 正常登录学校系统并打开课程评价详情页。
-4. 点击页面右下角“教评辅助”。
-5. 等待填写完成，逐项检查评分和文字。
-6. 确认无误后，由你本人手动保存或提交。
+2. 点击上方所需版本的安装链接。
+3. 在 Tampermonkey 页面点击“安装”。
+4. 正常登录学校系统并打开教评页面。
+5. 点击页面右下角“教评辅助”。
+6. Lite：检查填写结果后手动保存。
+7. Queue：会自动保存每门课程的草稿；全部处理完后，检查列表并手动决定是否最终提交评价。
 
-脚本会为评分项选择以“非常满意”为主、少量“满意”的组合，并为前两个开放题生成本地随机模板。每次结果可能略有不同，请务必检查是否符合你的真实体验。
+不需要会编程，不需要 GitHub 账号，也不需要 npm、下载 ZIP 或复制代码。
 
 ### 安装图示
 
@@ -29,24 +38,32 @@
 
 <img width="1115" height="275" alt="确认 Tampermonkey 已安装并启用" src="https://github.com/user-attachments/assets/c525da09-e50d-4b2b-810e-08542d146cdc" />
 
-## 支持页面
+## 两个版本的区别
 
-- `https://education.siat.ac.cn/*`
-- `https://education.suat-sz.edu.cn/*`
-
-脚本只在疑似课程评价页显示“教评辅助”按钮，并支持站内单页切换。
+| 功能 | Lite | Queue |
+| --- | --- | --- |
+| 填写当前课程 | 支持 | 支持 |
+| 随机评分与本地文字模板 | 支持 | 支持 |
+| 自动保存当前课程草稿 | 不支持 | 支持 |
+| 从列表处理“未填写”课程 | 不支持 | 支持 |
+| 点击最终“提交评价” | 永不点击 | 永不点击 |
+| 联网或收集数据 | 否 | 否 |
 
 ## 安全边界
 
-- 不联网，不收集或上传数据。
-- 不使用 AI。
-- 不自动保存或提交。
-- 不点击学校页面的保存、提交、确认等最终操作按钮。
+- 两版均不联网、不使用 AI、不收集数据。
 - 不绕过登录、验证码或权限控制。
-- 不批量提交课程评价。
-- 工具只减少重复操作，不替代用户的真实评价。
+- Lite 不点击“保存”，也不自动提交。
+- Queue 只允许点击详情页文字严格等于“保存”的按钮。
+- Queue 默认跳过“未提交”和“已提交”课程。
+- 两版均不会点击“提交评价”“提交”“确认”“最终提交”或其他最终动作按钮。
+- 用户必须检查评价内容，并自行决定是否最终提交。
 
-详细教程见 [使用说明](docs/usage.md)，遇到问题请查看 [常见问题](docs/troubleshooting.md)。
+详细说明见 [使用教程](docs/usage.md)、[伦理与安全边界](docs/ethics.md)和[常见问题](docs/troubleshooting.md)。
+
+## 如何卸载
+
+打开 Tampermonkey 管理面板，找到 Lite 或 Queue 脚本，点击删除，然后刷新学校页面。
 
 ## License
 
