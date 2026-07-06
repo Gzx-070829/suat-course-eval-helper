@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SIAT/SUAT 教师评价辅助填写器 Lite
 // @namespace    https://github.com/Gzx-070829/suat-course-eval-helper
-// @version      0.5.0
+// @version      1.1.0
 // @description  深圳理工大学教评极简辅助预填工具：只填写当前课程，本地运行，不联网，不自动保存，不自动提交
 // @author       Gzx-070829
 // @homepageURL  https://github.com/Gzx-070829/suat-course-eval-helper
@@ -31,7 +31,20 @@
   const STYLE_ID = `${SCRIPT_ID}-style`;
   const ALLOWED_HOSTS = new Set(['education.siat.ac.cn', 'education.suat-sz.edu.cn']);
   const RATING_CONTEXT_PATTERN = /(评价|满意|分值|教学|课程|教师|评分)/;
-  const TIMING = Object.freeze({ route: 350, dropdownOpen: 240, selected: 120, scroll: 90 });
+  const TIMING = Object.freeze({
+    route: 350,
+    domQuiet: 800,
+    domStableTimeout: 3000,
+    postStableDelay: 300,
+    dropdownTimeout: 300,
+    selected: 250,
+    verifyMin: 200,
+    verifyMax: 400,
+    scroll: 90,
+    fieldTimeout: 2200,
+    taskTimeout: 12000,
+    watchdogTimeout: 15000
+  });
 
   const ADVANTAGE_PARTS = Object.freeze({
     starts: [
@@ -141,11 +154,14 @@
   });
 
   const state = {
-    busy: false,
     routeTimer: 0,
-    operationToken: 0,
     historyPatched: false,
-    observer: null
+    observer: null,
+    pageSessionId: createSessionId(),
+    taskQueue: [],
+    currentTask: null,
+    queueRunning: false,
+    watchdogTimer: 0
   };
 
   // ---------------------------------------------------------------------------
@@ -154,6 +170,160 @@
 
   function sleep(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function createSessionId() {
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function createTask(execute, options = {}) {
+    return {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      sessionId: options.sessionId || state.pageSessionId,
+      execute,
+      attempt: options.attempt || 0,
+      maxRetries: 2,
+      timeout: options.timeout || TIMING.taskTimeout,
+      cancelled: false,
+      cancel() { this.cancelled = true; }
+    };
+  }
+
+  function assertTaskActive(task) {
+    if (!task || task.cancelled) throw new Error('TASK_CANCELLED');
+    if (task.sessionId !== state.pageSessionId) throw new Error('SESSION_CHANGED');
+  }
+
+  async function withTimeout(promise, timeoutMs, onTimeout) {
+    let timer = 0;
+    const operation = Promise.resolve(promise);
+    const outcome = await Promise.race([
+      operation.then(
+        (value) => ({ status: 'fulfilled', value }),
+        (error) => ({ status: 'rejected', error })
+      ),
+      new Promise((resolve) => {
+        timer = window.setTimeout(() => {
+          onTimeout?.();
+          resolve({ status: 'timeout' });
+        }, timeoutMs);
+      })
+    ]);
+    window.clearTimeout(timer);
+    if (outcome.status === 'timeout') {
+      try { await operation; } catch (_) { /* wait until cancelled DOM work has stopped */ }
+      throw new Error('TASK_TIMEOUT');
+    }
+    if (outcome.status === 'rejected') throw outcome.error;
+    return outcome.value;
+  }
+
+  function enqueue(execute, options = {}) {
+    const task = createTask(execute, options);
+    state.taskQueue.push(task);
+    runNext();
+    return task;
+  }
+
+  function cancelAllTasks() {
+    state.currentTask?.cancel();
+    state.taskQueue.forEach((task) => task.cancel());
+    state.taskQueue.length = 0;
+    window.clearTimeout(state.watchdogTimer);
+  }
+
+  async function runNext() {
+    if (state.queueRunning) return;
+    const task = state.taskQueue.shift();
+    if (!task) return;
+    if (task.cancelled || task.sessionId !== state.pageSessionId) {
+      runNext();
+      return;
+    }
+
+    state.queueRunning = true;
+    state.currentTask = task;
+    state.watchdogTimer = window.setTimeout(() => {
+      task.cancel();
+      state.taskQueue.forEach((pending) => pending.cancel());
+      state.taskQueue.length = 0;
+    }, TIMING.watchdogTimeout);
+
+    try {
+      await withTimeout(Promise.resolve().then(() => task.execute(task)), task.timeout, () => task.cancel());
+    } catch (error) {
+      const canRetry = !['SESSION_CHANGED', 'TASK_CANCELLED', 'DOM_NOT_STABLE'].includes(error.message) &&
+        task.attempt < task.maxRetries &&
+        task.sessionId === state.pageSessionId;
+      if (canRetry) {
+        state.taskQueue.unshift(createTask(task.execute, {
+          sessionId: task.sessionId,
+          attempt: task.attempt + 1,
+          timeout: task.timeout
+        }));
+      } else if (!['SESSION_CHANGED', 'TASK_CANCELLED'].includes(error.message)) {
+        console.warn(`[${SCRIPT_ID}] 填写任务终止：`, error);
+      }
+    } finally {
+      window.clearTimeout(state.watchdogTimer);
+      state.currentTask = null;
+      state.queueRunning = false;
+      runNext();
+    }
+  }
+
+  function rotatePageSession() {
+    cancelAllTasks();
+    state.pageSessionId = createSessionId();
+  }
+
+  function waitForStableDOM(sessionId) {
+    return new Promise((resolve, reject) => {
+      if (!document.body || sessionId !== state.pageSessionId) {
+        reject(new Error('SESSION_CHANGED'));
+        return;
+      }
+      let settled = false;
+      let quietTimer = 0;
+      let timeoutTimer = 0;
+      let sessionTimer = 0;
+      const observer = new MutationObserver(() => {
+        window.clearTimeout(quietTimer);
+        quietTimer = window.setTimeout(finishStable, TIMING.domQuiet);
+      });
+      const cleanup = () => {
+        observer.disconnect();
+        window.clearTimeout(quietTimer);
+        window.clearTimeout(timeoutTimer);
+        window.clearInterval(sessionTimer);
+      };
+      const finishStable = () => {
+        if (settled) return;
+        if (sessionId !== state.pageSessionId) {
+          settled = true;
+          cleanup();
+          reject(new Error('SESSION_CHANGED'));
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve();
+      };
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+      quietTimer = window.setTimeout(finishStable, TIMING.domQuiet);
+      timeoutTimer = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('DOM_NOT_STABLE'));
+      }, TIMING.domStableTimeout);
+      sessionTimer = window.setInterval(() => {
+        if (sessionId === state.pageSessionId || settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('SESSION_CHANGED'));
+      }, 100);
+    });
   }
 
   function normalizeText(value) {
@@ -170,6 +340,10 @@
 
   function randomItem(items) {
     return items[Math.floor(Math.random() * items.length)];
+  }
+
+  function randomVerificationDelay() {
+    return TIMING.verifyMin + Math.floor(Math.random() * (TIMING.verifyMax - TIMING.verifyMin + 1));
   }
 
   async function reveal(element) {
@@ -208,12 +382,15 @@
     return normalizeText(input?.value || select.querySelector('.el-select__tags-text')?.textContent || '');
   }
 
-  function findRatingSelects() {
+  function findEditableSelects() {
     return Array.from(document.querySelectorAll('.el-select')).filter((select) => {
       if (!isRenderable(select)) return false;
-      if (select.classList.contains('is-disabled') || select.getAttribute('aria-disabled') === 'true') return false;
-      return RATING_CONTEXT_PATTERN.test(getNearbyText(select));
+      return !select.classList.contains('is-disabled') && select.getAttribute('aria-disabled') !== 'true';
     });
+  }
+
+  function findRatingSelects() {
+    return findEditableSelects().filter((select) => RATING_CONTEXT_PATTERN.test(getNearbyText(select)));
   }
 
   function visibleDropdowns() {
@@ -232,48 +409,42 @@
       return controlled.closest('.el-select-dropdown') || (controlled.matches('.el-select-dropdown') ? controlled : null);
     }
 
-    return visible.length === 1 ? visible[0] : null;
+    return null;
   }
 
-  function canonicalRating(text) {
-    const value = normalizeText(text).replace(/\s/g, '');
-    if (/^非常满意(?:[（(]5分[）)])?$/.test(value)) return 'verySatisfied';
-    if (/^满意(?:[（(]4分[）)])?$/.test(value)) return 'satisfied';
-    return '';
+  function isExactVerySatisfied(text) {
+    return /^非常满意(?:\s*[（(]\s*5分\s*[）)])?$/.test(normalizeText(text));
   }
 
   function closeDropdown(trigger) {
     trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
   }
 
-  function createRatingPlan(count) {
-    if (count <= 0) return [];
-    const plan = Array(count).fill('verySatisfied');
-
-    let satisfiedCount = 0;
-    if (count >= 8) satisfiedCount = 1 + Math.floor(Math.random() * 2);
-    else satisfiedCount = Math.random() < 0.20 ? 1 : 0;
-
-    const indexes = Array.from({ length: count }, (_, index) => index);
-    for (let index = indexes.length - 1; index > 0; index -= 1) {
-      const swapIndex = Math.floor(Math.random() * (index + 1));
-      [indexes[index], indexes[swapIndex]] = [indexes[swapIndex], indexes[index]];
-    }
-    indexes.slice(0, satisfiedCount).forEach((index) => { plan[index] = 'satisfied'; });
-    return plan;
+  function assertFieldActive(task, fieldState, element) {
+    assertTaskActive(task);
+    if (fieldState.cancelled || !element?.isConnected) throw new Error('FIELD_CANCELLED');
   }
 
-  async function selectRating(select, rating, operationToken) {
-    if (operationToken !== state.operationToken || !select.isConnected) return false;
+  async function waitForCurrentDropdown(select, beforeDropdowns, task, fieldState) {
+    const deadline = Date.now() + TIMING.dropdownTimeout;
+    while (Date.now() < deadline) {
+      assertFieldActive(task, fieldState, select);
+      const dropdown = resolveCurrentDropdown(select, beforeDropdowns);
+      if (dropdown) return dropdown;
+      await sleep(25);
+    }
+    return null;
+  }
+
+  async function selectVerySatisfied(select, task, fieldState) {
+    assertFieldActive(task, fieldState, select);
     await reveal(select);
+    assertFieldActive(task, fieldState, select);
 
     const trigger = select.querySelector('input.el-input__inner, [role="combobox"]') || select;
     const beforeDropdowns = new Set(visibleDropdowns());
     trigger.click();
-    await sleep(TIMING.dropdownOpen);
-    if (operationToken !== state.operationToken || !select.isConnected) return false;
-
-    const dropdown = resolveCurrentDropdown(select, beforeDropdowns);
+    const dropdown = await waitForCurrentDropdown(select, beforeDropdowns, task, fieldState);
     if (!dropdown) {
       closeDropdown(trigger);
       return false;
@@ -282,16 +453,36 @@
     const items = Array.from(dropdown.querySelectorAll('.el-select-dropdown__item')).filter((item) => {
       return isRenderable(item) && !item.classList.contains('is-disabled') && item.getAttribute('aria-disabled') !== 'true';
     });
-    const targetItems = items.filter((item) => canonicalRating(item.innerText) === rating);
+    const targetItems = items.filter((item) => isExactVerySatisfied(item.innerText));
     if (targetItems.length !== 1) {
       closeDropdown(trigger);
       return false;
     }
 
-    if (operationToken !== state.operationToken) return false;
+    assertFieldActive(task, fieldState, select);
     targetItems[0].click();
     await sleep(TIMING.selected);
-    return canonicalRating(getSelectValue(select)) === rating;
+    assertFieldActive(task, fieldState, select);
+    const verified = isExactVerySatisfied(getSelectValue(select));
+    if (!verified) closeDropdown(trigger);
+    return verified;
+  }
+
+  async function fillSelectWithTimeout(select, task) {
+    const fieldState = { cancelled: false };
+    return withTimeout(
+      (async () => {
+        assertFieldActive(task, fieldState, select);
+        if (getSelectValue(select).trim() !== '') return 'skipped';
+        for (let attempt = 0; attempt <= 2; attempt += 1) {
+          assertFieldActive(task, fieldState, select);
+          if (await selectVerySatisfied(select, task, fieldState)) return 'success';
+        }
+        return 'failed';
+      })(),
+      TIMING.fieldTimeout,
+      () => { fieldState.cancelled = true; }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -325,6 +516,23 @@
     });
   }
 
+  function scanFieldsReadOnly(task) {
+    assertTaskActive(task);
+    const editableSelects = findEditableSelects();
+    const recognizedSelects = findRatingSelects();
+    const textareas = findTextareas();
+    const selects = recognizedSelects.filter((select) => getSelectValue(select).trim() === '');
+    const emptyTextareas = textareas.filter((textarea) => textarea.value.trim() === '');
+    return {
+      selects,
+      textareas,
+      emptySelectCount: selects.length,
+      emptyTextareas,
+      existingContentCount: recognizedSelects.length - selects.length + textareas.length - emptyTextareas.length,
+      unrecognizedControlCount: editableSelects.length - recognizedSelects.length
+    };
+  }
+
   function setNativeValue(element, value) {
     const prototype = element instanceof HTMLTextAreaElement
       ? HTMLTextAreaElement.prototype
@@ -344,80 +552,107 @@
     dispatchInputEvents(textarea);
   }
 
-  async function fillOpenQuestions() {
-    const textareas = findTextareas().slice(0, 2);
-    if (!textareas.length) return 0;
-
-    if (textareas.length === 1) {
-      await reveal(textareas[0]);
-      fillTextarea(textareas[0], `${generateAdvantage()}${generateSuggestion()}`);
-      return 1;
-    }
-
-    await reveal(textareas[0]);
-    fillTextarea(textareas[0], generateAdvantage());
-    await reveal(textareas[1]);
-    fillTextarea(textareas[1], generateSuggestion());
-    return 2;
+  async function fillTextareaWithTimeout(textarea, value, task) {
+    const fieldState = { cancelled: false };
+    return withTimeout((async () => {
+      assertFieldActive(task, fieldState, textarea);
+      if (textarea.value.trim() !== '') return 'skipped';
+      await reveal(textarea);
+      assertFieldActive(task, fieldState, textarea);
+      if (textarea.value.trim() !== '') return 'skipped';
+      for (let attempt = 0; attempt <= 2; attempt += 1) {
+        assertFieldActive(task, fieldState, textarea);
+        fillTextarea(textarea, value);
+        await sleep(randomVerificationDelay());
+        assertFieldActive(task, fieldState, textarea);
+        if (textarea.value === value) return 'success';
+      }
+      return 'failed';
+    })(), TIMING.fieldTimeout, () => { fieldState.cancelled = true; });
   }
 
   // ---------------------------------------------------------------------------
   // one-click fill
   // ---------------------------------------------------------------------------
 
-  async function fillEvaluation() {
-    if (state.busy) return;
-    if (!isEvaluationPage()) {
-      window.alert('当前页面不像课程评价详情页，请进入具体课程后再试。');
-      return;
-    }
-
-    state.busy = true;
-    state.operationToken += 1;
-    const operationToken = state.operationToken;
+  async function performFillTask(task) {
+    assertTaskActive(task);
     const button = document.getElementById(BUTTON_ID);
     if (button) {
       button.disabled = true;
       button.textContent = '填写中...';
     }
 
-    const ratingSelects = findRatingSelects();
-    const ratingPlan = createRatingPlan(ratingSelects.length);
-    let verySatisfiedCount = 0;
-    let satisfiedCount = 0;
-    let textareaCount = 0;
+    let successCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    let scan = { selects: [], emptyTextareas: [], existingContentCount: 0, unrecognizedControlCount: 0 };
 
     try {
-      for (let index = 0; index < ratingSelects.length; index += 1) {
+      await waitForStableDOM(task.sessionId);
+      await sleep(TIMING.postStableDelay);
+      assertTaskActive(task);
+      if (!isEvaluationPage()) throw new Error('SESSION_CHANGED');
+      scan = scanFieldsReadOnly(task);
+      skippedCount = scan.existingContentCount;
+
+      for (const select of scan.selects) {
         try {
-          const rating = ratingPlan[index];
-          const selected = await selectRating(ratingSelects[index], rating, operationToken);
-          if (selected && rating === 'verySatisfied') verySatisfiedCount += 1;
-          if (selected && rating === 'satisfied') satisfiedCount += 1;
+          const result = await fillSelectWithTimeout(select, task);
+          if (result === 'success') successCount += 1;
+          else if (result === 'skipped') skippedCount += 1;
+          else failedCount += 1;
         } catch (error) {
+          assertTaskActive(task);
+          failedCount += 1;
           console.warn(`[${SCRIPT_ID}] 评分项处理失败：`, error);
         }
       }
-      if (operationToken === state.operationToken && isEvaluationPage()) {
-        textareaCount = await fillOpenQuestions();
+
+      const oneTextOnly = scan.emptyTextareas.length === 1;
+      for (let index = 0; index < scan.emptyTextareas.length; index += 1) {
+        const value = oneTextOnly
+          ? `${generateAdvantage()}${generateSuggestion()}`
+          : (index === 0 ? generateAdvantage() : generateSuggestion());
+        try {
+          const result = await fillTextareaWithTimeout(scan.emptyTextareas[index], value, task);
+          if (result === 'success') successCount += 1;
+          else if (result === 'skipped') skippedCount += 1;
+          else failedCount += 1;
+        } catch (error) {
+          assertTaskActive(task);
+          failedCount += 1;
+          console.warn(`[${SCRIPT_ID}] 文本框处理失败：`, error);
+        }
       }
 
+      assertTaskActive(task);
       window.alert(
         `教评辅助填写完成：\n\n` +
-        `发现评分项数量：${ratingSelects.length}\n` +
-        `非常满意数量：${verySatisfiedCount}\n` +
-        `满意数量：${satisfiedCount}\n` +
-        `文本框填写数量：${textareaCount}\n\n` +
+        `✔ 成功写入：${successCount}\n` +
+        `⏭ 跳过已有内容：${skippedCount}\n` +
+        `⚠ 写入失败（重试后）：${failedCount}\n` +
+        `❌ 未识别控件：${scan.unrecognizedControlCount}\n\n` +
         '请逐项检查评分和文字，确认无误后手动保存。'
       );
     } finally {
-      state.busy = false;
       const currentButton = document.getElementById(BUTTON_ID);
       if (currentButton) {
         currentButton.disabled = false;
         currentButton.textContent = '教评辅助';
       }
     }
+  }
+
+  function fillEvaluation() {
+    if (!isEvaluationPage()) {
+      window.alert('当前页面不像课程评价详情页，请进入具体课程后再试。');
+      return;
+    }
+    const hasActiveFill = state.currentTask?.sessionId === state.pageSessionId ||
+      state.taskQueue.some((task) => task.sessionId === state.pageSessionId);
+    if (hasActiveFill) return;
+    enqueue(performFillTask, { sessionId: state.pageSessionId, timeout: TIMING.taskTimeout });
   }
 
   // ---------------------------------------------------------------------------
@@ -465,7 +700,6 @@
 
   function unmountButton() {
     if (document.getElementById(BUTTON_ID)) {
-      state.operationToken += 1;
       document.getElementById(BUTTON_ID)?.remove();
     }
   }
@@ -480,6 +714,11 @@
     state.routeTimer = window.setTimeout(syncWithPage, TIMING.route);
   }
 
+  function handleRouteChange() {
+    rotatePageSession();
+    scheduleSync();
+  }
+
   function patchHistory() {
     if (state.historyPatched) return;
     state.historyPatched = true;
@@ -487,12 +726,12 @@
       const original = history[method];
       history[method] = function (...args) {
         const result = original.apply(this, args);
-        scheduleSync();
+        handleRouteChange();
         return result;
       };
     }
-    window.addEventListener('popstate', scheduleSync);
-    window.addEventListener('hashchange', scheduleSync);
+    window.addEventListener('popstate', handleRouteChange);
+    window.addEventListener('hashchange', handleRouteChange);
   }
 
   function bootstrap() {
